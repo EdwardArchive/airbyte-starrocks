@@ -1,0 +1,84 @@
+/*
+ * Copyright (c) 2026 Airbyte, Inc., all rights reserved.
+ */
+
+package io.airbyte.integrations.destination.starrocks.spec
+
+import com.fasterxml.jackson.annotation.JsonProperty
+import com.fasterxml.jackson.annotation.JsonPropertyDescription
+import com.kjetland.jackson.jsonSchema.annotations.JsonSchemaInject
+import com.kjetland.jackson.jsonSchema.annotations.JsonSchemaTitle
+import io.airbyte.cdk.command.AIRBYTE_CLOUD_ENV
+import io.airbyte.cdk.command.ConfigurationSpecification
+import io.airbyte.cdk.load.spec.DestinationSpecificationExtension
+import io.airbyte.protocol.models.v0.DestinationSyncMode
+import io.micronaut.context.annotation.Requires
+import jakarta.inject.Singleton
+
+/**
+ * StarRocks destination connector configuration spec (OSS).
+ *
+ * Data plane = HTTP Stream Load (`http_port`, default 8030); control plane (DDL,
+ * `SELECT current_version()`) = MySQL protocol (`port`, default 9030).
+ * See STARROCKS-VERSION-COMPATIBILITY.md for the shared-data feature gating.
+ */
+@Singleton
+@Requires(notEnv = [AIRBYTE_CLOUD_ENV])
+class StarrocksSpecification : ConfigurationSpecification() {
+    @get:JsonSchemaTitle("Host")
+    @get:JsonPropertyDescription("FE host of the StarRocks cluster.")
+    @get:JsonProperty("host")
+    @get:JsonSchemaInject(json = """{"order": 0, "group": "connection"}""")
+    val host: String = ""
+
+    @get:JsonSchemaTitle("Query Port")
+    @get:JsonPropertyDescription("MySQL-protocol port for queries/DDL. Default: 9030")
+    @get:JsonProperty("port")
+    @get:JsonSchemaInject(json = """{"order": 1, "default": 9030, "group": "connection"}""")
+    val port: Int = 9030
+
+    @get:JsonSchemaTitle("HTTP Port")
+    @get:JsonPropertyDescription("FE HTTP port for Stream Load. Default: 8030")
+    @get:JsonProperty("http_port")
+    @get:JsonSchemaInject(json = """{"order": 2, "default": 8030, "group": "connection"}""")
+    val httpPort: Int = 8030
+
+    @get:JsonSchemaTitle("Username")
+    @get:JsonPropertyDescription("Username to access the database.")
+    @get:JsonProperty("username")
+    @get:JsonSchemaInject(json = """{"order": 3, "default": "root", "group": "connection"}""")
+    val username: String = "root"
+
+    @get:JsonSchemaTitle("Password")
+    @get:JsonPropertyDescription("Password associated with the username.")
+    @get:JsonProperty("password")
+    @get:JsonSchemaInject(json = """{"order": 4, "airbyte_secret": true, "group": "connection"}""")
+    val password: String = ""
+
+    @get:JsonSchemaTitle("Database")
+    @get:JsonPropertyDescription("Name of the target database.")
+    @get:JsonProperty("database")
+    @get:JsonSchemaInject(json = """{"order": 5, "group": "connection"}""")
+    val database: String = ""
+
+    @get:JsonSchemaTitle("SSL")
+    @get:JsonPropertyDescription("Use SSL for the MySQL-protocol connection.")
+    @get:JsonProperty("ssl")
+    @get:JsonSchemaInject(json = """{"order": 6, "default": false, "group": "connection"}""")
+    val ssl: Boolean = false
+}
+
+@Singleton
+class StarrocksSpecificationExtension : DestinationSpecificationExtension {
+    override val supportedSyncModes =
+        listOf(
+            DestinationSyncMode.OVERWRITE,
+            DestinationSyncMode.APPEND,
+            DestinationSyncMode.APPEND_DEDUP,
+        )
+    override val supportsIncremental = true
+    override val groups =
+        listOf(
+            DestinationSpecificationExtension.Group("connection", "Connection"),
+        )
+}

@@ -1,68 +1,34 @@
-# Destination StarRocks
+# Destination StarRocks (Kotlin, Bulk-Load CDK)
 
-This is the repository for the StarRocks destination connector in Java.
-For information about how to use this connector within Airbyte, see [the User Documentation](https://docs.airbyte.com/integrations/destinations/starrocks).
+StarRocks destination connector, rewritten on Airbyte's **Bulk-Load CDK** (dataflow `Aggregate`)
+in Kotlin. See epic [#6](https://github.com/EdwardArchive/airbyte-starrocks/issues/6) and
+`STARROCKS-VERSION-COMPATIBILITY.md` for the StarRocks version feature gating.
 
-## Local development
+- **Data plane:** HTTP Stream Load (`http_port`, default 8030).
+- **Control plane:** MySQL protocol (`port`, default 9030) for DDL and `SELECT current_version()`.
 
-#### Building via Gradle
-From the Airbyte repository root, run:
+## Requirements
+
+- **JDK 21** (the CDK and connector are compiled/run for Java 21). Build with `JAVA_HOME` pointing
+  at a JDK 21 install, e.g.:
+  ```
+  JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 ./gradlew :destination-starrocks:run --args="--spec"
+  ```
+
+## Connector CLI
+
+The CDK takes the operation as a long flag (`--spec`, `--check`, `--discover`, `--write`), e.g.:
+
 ```
-./gradlew :airbyte-integrations:connectors:destination-starrocks:build
-```
-
-#### Create credentials
-**If you are a community contributor**, generate the necessary credentials and place them in `secrets/config.json` conforming to the spec file in `src/main/resources/spec.json`.
-Note that the `secrets` directory is git-ignored by default, so there is no danger of accidentally checking in sensitive information.
-
-**If you are an Airbyte core member**, follow the [instructions](https://docs.airbyte.com/connector-development#using-credentials-in-ci) to set up the credentials.
-
-### Locally running the connector docker image
-
-#### Build
-Build the connector image via Gradle:
-```
-./gradlew :airbyte-integrations:connectors:destination-starrocks:airbyteDocker
-```
-When building via Gradle, the docker image name and tag, respectively, are the values of the `io.airbyte.name` and `io.airbyte.version` `LABEL`s in
-the Dockerfile.
-
-#### Run
-Then run any of the connector commands as follows:
-```
-docker run --rm airbyte/destination-starrocks:dev spec
-docker run --rm -v $(pwd)/secrets:/secrets airbyte/destination-starrocks:dev check --config /secrets/config.json
-docker run --rm -v $(pwd)/secrets:/secrets airbyte/destination-starrocks:dev discover --config /secrets/config.json
-docker run --rm -v $(pwd)/secrets:/secrets -v $(pwd)/integration_tests:/integration_tests airbyte/destination-starrocks:dev read --config /secrets/config.json --catalog /integration_tests/configured_catalog.json
+./gradlew :destination-starrocks:run --args="--spec"
+./gradlew :destination-starrocks:run --args="--check --config secrets/config.json"
 ```
 
-## Testing
-We use `JUnit` for Java tests.
+## Build / test
 
-### Unit and Integration Tests
-Place unit tests under `src/test/io/airbyte/integrations/destinations/starrocks`.
-
-#### Acceptance Tests
-Airbyte has a standard test suite that all destination connectors must pass. Implement the `TODO`s in
-`src/test-integration/java/io/airbyte/integrations/destinations/starrocksDestinationAcceptanceTest.java`.
-
-### Using gradle to run tests
-All commands should be run from airbyte project root.
-To run unit tests:
 ```
-./gradlew :airbyte-integrations:connectors:destination-starrocks:unitTest
-```
-To run acceptance and custom integration tests:
-```
-./gradlew :airbyte-integrations:connectors:destination-starrocks:integrationTest
+./gradlew :destination-starrocks:build      # compile + tests
+./gradlew :destination-starrocks:test       # unit tests
 ```
 
-## Dependency Management
-
-### Publishing a new version of the connector
-You've checked out the repo, implemented a million dollar feature, and you're ready to share your changes with the world. Now what?
-1. Make sure your changes are passing unit and integration tests.
-1. Bump the connector version in `Dockerfile` -- just increment the value of the `LABEL io.airbyte.version` appropriately (we use [SemVer](https://semver.org/)).
-1. Create a Pull Request.
-1. Pat yourself on the back for being an awesome contributor.
-1. Someone from Airbyte will take a look at your PR and iterate with you to merge it into master.
+Integration tests (Testcontainers StarRocks) and the acceptance suite are added in issue #13.
