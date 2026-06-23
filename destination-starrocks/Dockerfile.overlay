@@ -1,0 +1,7 @@
+# Quick overlay build: keep the published upstream image, replace only the
+# patched Python sources. This is what the currently-deployed image
+# (192.168.10.10/library/destination-starrocks:1.0.1) was built from.
+# Use for fast iteration; the from-source Dockerfile is the canonical build.
+FROM starrocks/destination-starrocks:1.0.0
+COPY main.py /airbyte/integration_code/main.py
+COPY destination_starrocks /airbyte/integration_code/destination_starrocks

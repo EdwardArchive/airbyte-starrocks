@@ -1,18 +1,18 @@
-FROM airbyte/integration-base-java:dev AS build
+# From-source build of the (Python) StarRocks destination connector.
+# Mirrors the upstream starrocks/destination-starrocks:1.0.0 runtime
+# (python 3.11, airbyte-cdk 0.62.1, entrypoint python main.py).
+FROM python:3.11-slim
 
-WORKDIR /airbyte
-ENV APPLICATION destination-starrocks
+WORKDIR /airbyte/integration_code
 
-COPY build/distributions/${APPLICATION}*.tar ${APPLICATION}.tar
+RUN pip install --no-cache-dir "poetry==1.8.3"
 
-RUN tar xf ${APPLICATION}.tar --strip-components=1 && rm -rf ${APPLICATION}.tar
+COPY pyproject.toml poetry.lock ./
+RUN poetry config virtualenvs.create false \
+ && poetry install --no-root --only main --no-interaction --no-ansi
 
-FROM airbyte/integration-base-java:dev
+COPY main.py ./
+COPY destination_starrocks ./destination_starrocks
 
-WORKDIR /airbyte
-ENV APPLICATION destination-starrocks
-
-COPY --from=build /airbyte /airbyte
-
-LABEL io.airbyte.version=0.1.0
-LABEL io.airbyte.name=airbyte/destination-starrocks
+ENV AIRBYTE_ENTRYPOINT="python /airbyte/integration_code/main.py"
+ENTRYPOINT ["python", "/airbyte/integration_code/main.py"]

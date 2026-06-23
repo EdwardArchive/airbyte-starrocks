@@ -1,68 +1,47 @@
-# Destination StarRocks
+# destination-starrocks (Python) — cshift fork
 
-This is the repository for the StarRocks destination connector in Java.
-For information about how to use this connector within Airbyte, see [the User Documentation](https://docs.airbyte.com/integrations/destinations/starrocks).
+Maintained fork of the Airbyte **StarRocks destination** connector, tracking the
+deployed Python connector (upstream image `starrocks/destination-starrocks:1.0.0`,
+which is NOT published as source on `StarRocks/airbyte-starrocks` — that repo's
+`main` is the old Java connector). The Python sources here were imported from the
+1.0.0 image so the connector can be patched and rebuilt.
 
-## Local development
+## Why this fork exists
+On our on-prem StarRocks (shared-data / CN) cluster the stock connector fails to
+load data. Fixes are tracked as issues/PRs:
 
-#### Building via Gradle
-From the Airbyte repository root, run:
+- **#-redirect — Stream Load auth lost on FE→CN 307 redirect** (✅ done): the
+  Python `requests` session strips the `Authorization` header on cross-host
+  redirects, so the CN node answers `no valid Basic authorization`. Fixed in
+  `destination_starrocks/writer.py` (`_create_http_session`). Same root cause as
+  upstream issue #6.
+- **PRIMARY KEY tables** (planned): connector creates `UNIQUE KEY` tables;
+  StarRocks recommends `PRIMARY KEY` (enables load-time delete + partial update).
+- **`__op` delete** (planned): translate CDC `_ab_cdc_deleted_at` into a StarRocks
+  Stream Load `__op` delete so deletes physically propagate.
+- **CDC GLOBAL-state** (planned): make CDC syncs work end-to-end.
+
+## Layout
 ```
-./gradlew :airbyte-integrations:connectors:destination-starrocks:build
-```
-
-#### Create credentials
-**If you are a community contributor**, generate the necessary credentials and place them in `secrets/config.json` conforming to the spec file in `src/main/resources/spec.json`.
-Note that the `secrets` directory is git-ignored by default, so there is no danger of accidentally checking in sensitive information.
-
-**If you are an Airbyte core member**, follow the [instructions](https://docs.airbyte.com/connector-development#using-credentials-in-ci) to set up the credentials.
-
-### Locally running the connector docker image
-
-#### Build
-Build the connector image via Gradle:
-```
-./gradlew :airbyte-integrations:connectors:destination-starrocks:airbyteDocker
-```
-When building via Gradle, the docker image name and tag, respectively, are the values of the `io.airbyte.name` and `io.airbyte.version` `LABEL`s in
-the Dockerfile.
-
-#### Run
-Then run any of the connector commands as follows:
-```
-docker run --rm airbyte/destination-starrocks:dev spec
-docker run --rm -v $(pwd)/secrets:/secrets airbyte/destination-starrocks:dev check --config /secrets/config.json
-docker run --rm -v $(pwd)/secrets:/secrets airbyte/destination-starrocks:dev discover --config /secrets/config.json
-docker run --rm -v $(pwd)/secrets:/secrets -v $(pwd)/integration_tests:/integration_tests airbyte/destination-starrocks:dev read --config /secrets/config.json --catalog /integration_tests/configured_catalog.json
+destination-starrocks/
+  main.py                       # entrypoint (python main.py)
+  pyproject.toml / poetry.lock  # deps: airbyte-cdk 0.62.1, starrocks, requests
+  Dockerfile                    # from-source build (canonical)
+  Dockerfile.overlay            # quick build over the published 1.0.0 image
+  destination_starrocks/        # connector module (config, destination, writer, run, spec)
 ```
 
-## Testing
-We use `JUnit` for Java tests.
-
-### Unit and Integration Tests
-Place unit tests under `src/test/io/airbyte/integrations/destinations/starrocks`.
-
-#### Acceptance Tests
-Airbyte has a standard test suite that all destination connectors must pass. Implement the `TODO`s in
-`src/test-integration/java/io/airbyte/integrations/destinations/starrocksDestinationAcceptanceTest.java`.
-
-### Using gradle to run tests
-All commands should be run from airbyte project root.
-To run unit tests:
+## Build & push (internal Harbor; project `library` is public)
+```bash
+cd destination-starrocks
+# canonical:
+docker build -t 192.168.10.10/library/destination-starrocks:<tag> .
+# or fast overlay:
+docker build -f Dockerfile.overlay -t 192.168.10.10/library/destination-starrocks:<tag> .
+docker login 192.168.10.10
+docker push 192.168.10.10/library/destination-starrocks:<tag>
 ```
-./gradlew :airbyte-integrations:connectors:destination-starrocks:unitTest
-```
-To run acceptance and custom integration tests:
-```
-./gradlew :airbyte-integrations:connectors:destination-starrocks:integrationTest
-```
+Then point the Airbyte custom connector at `192.168.10.10/library/destination-starrocks:<tag>`
+(the image tag must match exactly, or the job pod hits ImagePullBackOff).
 
-## Dependency Management
-
-### Publishing a new version of the connector
-You've checked out the repo, implemented a million dollar feature, and you're ready to share your changes with the world. Now what?
-1. Make sure your changes are passing unit and integration tests.
-1. Bump the connector version in `Dockerfile` -- just increment the value of the `LABEL io.airbyte.version` appropriately (we use [SemVer](https://semver.org/)).
-1. Create a Pull Request.
-1. Pat yourself on the back for being an awesome contributor.
-1. Someone from Airbyte will take a look at your PR and iterate with you to merge it into master.
+Currently deployed: `:1.0.1` (== `:1.0.1-redirectfix`).
