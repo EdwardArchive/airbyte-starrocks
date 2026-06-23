@@ -124,7 +124,17 @@ class StarRocksWriter:
         from requests.adapters import HTTPAdapter
         from urllib3.util.retry import Retry
 
-        session = requests.Session()
+        class _RedirectAuthSession(requests.Session):
+            # StarRocks Stream Load is sent to the FE (:8030), which replies with a
+            # 307 Temporary Redirect to a BE/CN node (:8040) on a DIFFERENT host.
+            # requests strips the Authorization header on cross-host redirects
+            # (rebuild_auth), so the BE/CN receives no credentials and answers
+            # "no valid Basic authorization". Keep auth across the redirect — the
+            # programmatic equivalent of `curl --location-trusted`. (issue #6)
+            def rebuild_auth(self, prepared_request, response):
+                return
+
+        session = _RedirectAuthSession()
         session.auth = (self.config.username, self.config.password)
         session.verify = self.config.ssl
 
