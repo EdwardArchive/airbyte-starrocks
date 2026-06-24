@@ -47,7 +47,9 @@ class StarrocksBeanFactory {
             httpPort = config.httpPort,
             username = config.username,
             password = config.password,
-            useSsl = config.ssl,
+            // NOTE: Stream Load stays HTTP regardless of `ssl`. StarRocks serves the HTTP/Stream Load
+            // port (8030) over plain HTTP even when the MySQL-protocol port (9030) has TLS — so
+            // wiring `useSsl = config.ssl` broke loads on SSL clusters. `ssl` is JDBC-only.
         )
 
     /** DDL + table metadata over the MySQL protocol (port 9030). */
