@@ -249,10 +249,13 @@ class StarrocksAirbyteClient(
 
         val qualifiedTable = "${quoteIdent(tableName.namespace)}.${quoteIdent(tableName.name)}"
         columnChangeset.columnsToAdd.forEach { (name, type) ->
-            execute(
-                "ALTER TABLE $qualifiedTable " +
-                    "ADD COLUMN ${quoteIdent(name)} ${type.type}${if (type.nullable) " NULL" else " NOT NULL"}",
-            )
+            // New columns are always added NULLABLE: StarRocks rejects `ADD COLUMN ... NOT NULL`
+            // without a DEFAULT on a populated table, and existing rows have no value for a freshly
+            // added column anyway (so they must be null) (#43).
+            if (!type.nullable) {
+                log.warn { "Adding column `$name` as NULLABLE — StarRocks cannot ADD a NOT NULL column to an existing table" }
+            }
+            execute("ALTER TABLE $qualifiedTable ADD COLUMN ${quoteIdent(name)} ${type.type} NULL")
         }
         columnChangeset.columnsToChange.forEach { (name, change) ->
             if (name in keyColumns) {
