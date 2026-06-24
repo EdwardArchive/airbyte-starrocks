@@ -75,6 +75,27 @@ class StarrocksSpecification : ConfigurationSpecification() {
     @get:JsonProperty("enable_json")
     @get:JsonSchemaInject(json = """{"order": 7, "default": false, "group": "connection"}""")
     val enableJson: Boolean = false
+
+    @get:JsonSchemaTitle("CDC Deletion Mode")
+    @get:JsonPropertyDescription(
+        "How to handle CDC deletes for deduped streams. 'Hard delete' removes the row from the " +
+            "destination. 'Soft delete' keeps the row and marks it via the _ab_cdc_deleted_at column " +
+            "(query WHERE _ab_cdc_deleted_at IS NULL for live rows).",
+    )
+    @get:JsonProperty("cdc_deletion_mode")
+    @get:JsonSchemaInject(
+        json =
+            """{"order": 8, "default": "Hard delete", "enum": ["Hard delete", "Soft delete"], "group": "connection"}""",
+    )
+    val cdcDeletionMode: String = CdcDeletionMode.HARD_DELETE
+
+    val cdcSoftDelete: Boolean
+        get() = cdcDeletionMode.equals(CdcDeletionMode.SOFT_DELETE, ignoreCase = true)
+}
+
+object CdcDeletionMode {
+    const val HARD_DELETE = "Hard delete"
+    const val SOFT_DELETE = "Soft delete"
 }
 
 @Singleton

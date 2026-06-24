@@ -18,6 +18,7 @@ import io.airbyte.cdk.load.table.CDC_DELETED_AT_COLUMN
 import io.airbyte.cdk.load.table.directload.DirectLoadTableExecutionConfig
 import io.airbyte.cdk.load.write.StreamStateStore
 import io.airbyte.integrations.destination.starrocks.http.StreamLoadClient
+import io.airbyte.integrations.destination.starrocks.spec.StarrocksConfiguration
 import io.airbyte.integrations.destination.starrocks.write.load.CsvRowInsertBuffer
 import io.micronaut.context.annotation.Factory
 
@@ -40,6 +41,7 @@ class StarrocksAggregateFactory(
     private val catalog: DestinationCatalog,
     private val streamStateStore: StreamStateStore<DirectLoadTableExecutionConfig>,
     private val streamLoadClient: StreamLoadClient,
+    private val config: StarrocksConfiguration,
 ) : AggregateFactory {
 
     override fun create(key: DestinationStream.Descriptor): Aggregate {
@@ -52,6 +54,7 @@ class StarrocksAggregateFactory(
                 columns = finalColumns(stream),
                 cdcDeleteEnabled = cdcDeleteEnabled(stream),
                 streamLoadClient = streamLoadClient,
+                softDelete = config.cdcSoftDelete,
             )
         return StarrocksAggregate(buffer)
     }
