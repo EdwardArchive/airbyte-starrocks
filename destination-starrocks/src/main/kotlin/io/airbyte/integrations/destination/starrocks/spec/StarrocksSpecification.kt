@@ -66,6 +66,15 @@ class StarrocksSpecification : ConfigurationSpecification() {
     @get:JsonProperty("ssl")
     @get:JsonSchemaInject(json = """{"order": 6, "default": false, "group": "connection"}""")
     val ssl: Boolean = false
+
+    @get:JsonSchemaTitle("Enable JSON")
+    @get:JsonPropertyDescription(
+        "Store object fields using the StarRocks JSON type instead of a JSON-encoded string. " +
+            "Useful for sources with rich JSON columns (e.g. Postgres jsonb).",
+    )
+    @get:JsonProperty("enable_json")
+    @get:JsonSchemaInject(json = """{"order": 7, "default": false, "group": "connection"}""")
+    val enableJson: Boolean = false
 }
 
 @Singleton

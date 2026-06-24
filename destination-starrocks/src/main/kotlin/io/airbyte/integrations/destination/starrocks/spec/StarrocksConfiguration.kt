@@ -22,6 +22,7 @@ data class StarrocksConfiguration(
     val password: String,
     val database: String,
     val ssl: Boolean,
+    val enableJson: Boolean,
 ) : DestinationConfiguration() {
     val resolvedDatabase: String = database.ifEmpty { Defaults.DATABASE_NAME }
 
@@ -46,5 +47,6 @@ class StarrocksConfigurationFactory :
             password = pojo.password,
             database = pojo.database,
             ssl = pojo.ssl,
+            enableJson = pojo.enableJson,
         )
 }

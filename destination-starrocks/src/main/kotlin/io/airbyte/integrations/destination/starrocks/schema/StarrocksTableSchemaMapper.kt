@@ -72,11 +72,12 @@ class StarrocksTableSchemaMapper(
                 ArrayTypeWithoutSchema,
                 is UnionType,
                 is UnknownType -> StarrocksSqlTypes.STRING
-                // No `enableJson` flag on StarrocksConfiguration yet; objects are stored as JSON
-                // strings. Switch to StarrocksSqlTypes.JSON once the spec exposes a toggle.
+                // Objects map to the StarRocks JSON type when `enable_json` is set, else a
+                // JSON-encoded STRING (e.g. for Postgres jsonb columns).
                 ObjectTypeWithEmptySchema,
                 ObjectTypeWithoutSchema,
-                is ObjectType -> StarrocksSqlTypes.STRING
+                is ObjectType ->
+                    if (config.enableJson) StarrocksSqlTypes.JSON else StarrocksSqlTypes.STRING
             }
 
         return ColumnType(starrocksType, fieldType.nullable)
