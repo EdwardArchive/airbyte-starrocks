@@ -65,13 +65,9 @@ class StarrocksChecker(
         }
         try {
             val response =
-                StreamLoadClient(
-                        config.host,
-                        config.httpPort,
-                        config.username,
-                        config.password,
-                        useSsl = config.ssl,
-                    )
+                // Stream Load stays HTTP regardless of `ssl` (StarRocks' http_port is plain HTTP even
+                // on TLS-enabled clusters; `ssl` is for the JDBC control plane only).
+                StreamLoadClient(config.host, config.httpPort, config.username, config.password)
                     .streamLoad(
                         database = database,
                         table = table,
