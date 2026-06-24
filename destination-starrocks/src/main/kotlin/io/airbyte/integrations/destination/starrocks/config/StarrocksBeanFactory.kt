@@ -47,6 +47,7 @@ class StarrocksBeanFactory {
             httpPort = config.httpPort,
             username = config.username,
             password = config.password,
+            useSsl = config.ssl,
         )
 
     /** DDL + table metadata over the MySQL protocol (port 9030). */

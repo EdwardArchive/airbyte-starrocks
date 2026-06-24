@@ -65,7 +65,13 @@ class StarrocksChecker(
         }
         try {
             val response =
-                StreamLoadClient(config.host, config.httpPort, config.username, config.password)
+                StreamLoadClient(
+                        config.host,
+                        config.httpPort,
+                        config.username,
+                        config.password,
+                        useSsl = config.ssl,
+                    )
                     .streamLoad(
                         database = database,
                         table = table,
