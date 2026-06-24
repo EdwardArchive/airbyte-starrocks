@@ -150,4 +150,25 @@ class CsvRowInsertBufferTest {
         val row = buf.csvSnapshot().trimEnd('\n')
         assertEquals("\"rid-7\",10,1,\\N", row)
     }
+
+    @Test
+    fun `stream load headers contain no control characters`() {
+        // Regression: a raw "\n" in the row_delimiter header made OkHttp reject the request
+        // ("Unexpected char 0x0a"). Every header VALUE must be free of control chars.
+        for ((k, v) in buffer(cdc = true).streamLoadHeaders()) {
+            assertTrue(v.all { it.code >= 0x20 }, "header '$k' must not contain a control char: $v")
+        }
+    }
+
+    @Test
+    fun `stream load headers omit row_delimiter and escape`() {
+        val h = buffer(cdc = false).streamLoadHeaders()
+        assertEquals("CSV", h["format"])
+        assertEquals(",", h["column_separator"])
+        assertEquals("\"", h["enclose"])
+        assertTrue(h.containsKey("columns"))
+        // row_delimiter (raw \n) and escape (collides with \N null) are intentionally not sent.
+        assertFalse(h.containsKey("row_delimiter"))
+        assertFalse(h.containsKey("escape"))
+    }
 }

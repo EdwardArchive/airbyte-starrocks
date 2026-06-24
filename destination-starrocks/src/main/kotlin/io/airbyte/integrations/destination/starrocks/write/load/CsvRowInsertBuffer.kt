@@ -76,21 +76,28 @@ class CsvRowInsertBuffer(
             columns.joinToString(",")
         }
 
+    /**
+     * Stream Load request headers. HTTP header values MUST NOT contain control characters, so the
+     * row delimiter is intentionally NOT sent: StarRocks defaults to `\n`, which is exactly what the
+     * CSV body uses. (Sending `row_delimiter: \n` makes OkHttp reject the header with
+     * "Unexpected char 0x0a".) Likewise we rely on `enclose` + doubled quotes for escaping rather
+     * than an `escape` char, to avoid colliding with the `\N` null marker.
+     */
+    internal fun streamLoadHeaders(): Map<String, String> =
+        mapOf(
+            "format" to "CSV",
+            "column_separator" to COLUMN_SEPARATOR,
+            "enclose" to "\"",
+            "columns" to columnsHeader(),
+        )
+
     suspend fun flush() {
         if (rowCount == 0L) {
             log.info { "No rows to flush for ${tableName.name}; skipping Stream Load" }
             return
         }
         val label = "airbyte-${UUID.randomUUID()}"
-        val headers =
-            mapOf(
-                "format" to "CSV",
-                "column_separator" to COLUMN_SEPARATOR,
-                "row_delimiter" to ROW_DELIMITER,
-                "enclose" to "\"",
-                "escape" to "\\",
-                "columns" to columnsHeader(),
-            )
+        val headers = streamLoadHeaders()
 
         log.info { "Stream Load of $rowCount rows into ${tableName.namespace}.${tableName.name}" }
         val response =
