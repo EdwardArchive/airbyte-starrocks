@@ -26,6 +26,9 @@ dependencies {
 
     // 9030 MySQL protocol: DDL + `SELECT current_version()` (used from issue #8 onward).
     implementation("com.mysql:mysql-connector-j:8.4.0")
+
+    testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.10.2")
 }
 
 application {
@@ -46,6 +49,10 @@ kotlin {
 java {
     sourceCompatibility = JavaVersion.VERSION_21
     targetCompatibility = JavaVersion.VERSION_21
+}
+
+tasks.named<Test>("test") {
+    useJUnitPlatform()
 }
 
 // The CDK (Micronaut) loads metadata.yaml from the runtime classpath.
