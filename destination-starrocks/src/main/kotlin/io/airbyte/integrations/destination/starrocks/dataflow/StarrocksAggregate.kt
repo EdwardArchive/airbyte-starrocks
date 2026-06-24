@@ -20,11 +20,13 @@ import io.airbyte.cdk.load.write.StreamStateStore
 import io.airbyte.integrations.destination.starrocks.http.StreamLoadClient
 import io.airbyte.integrations.destination.starrocks.spec.StarrocksConfiguration
 import io.airbyte.integrations.destination.starrocks.write.load.CsvRowInsertBuffer
+import io.airbyte.integrations.destination.starrocks.write.load.JsonRowInsertBuffer
+import io.airbyte.integrations.destination.starrocks.write.load.RowInsertBuffer
 import io.micronaut.context.annotation.Factory
 
-/** Wraps a [CsvRowInsertBuffer]: each accepted record becomes a CSV row; [flush] issues Stream Load. */
+/** Wraps a [RowInsertBuffer]: each accepted record is buffered; [flush] issues Stream Load. */
 class StarrocksAggregate(
-    internal val buffer: CsvRowInsertBuffer,
+    internal val buffer: RowInsertBuffer,
 ) : Aggregate {
 
     override fun accept(record: RecordDTO) {
@@ -59,14 +61,13 @@ class StarrocksAggregateFactory(
                 "with the CDC operation column StarRocks uses for load-time delete/upsert. Rename it at the source."
         }
 
-        val buffer =
-            CsvRowInsertBuffer(
-                tableName = tableName,
-                columns = finalColumns(stream),
-                cdcDeleteEnabled = cdcDelete,
-                streamLoadClient = streamLoadClient,
-                softDelete = config.cdcSoftDelete,
-            )
+        val columns = finalColumns(stream)
+        val buffer: RowInsertBuffer =
+            if (config.loadAsJson) {
+                JsonRowInsertBuffer(tableName, columns, cdcDelete, streamLoadClient, config.cdcSoftDelete)
+            } else {
+                CsvRowInsertBuffer(tableName, columns, cdcDelete, streamLoadClient, config.cdcSoftDelete)
+            }
         return StarrocksAggregate(buffer)
     }
 
