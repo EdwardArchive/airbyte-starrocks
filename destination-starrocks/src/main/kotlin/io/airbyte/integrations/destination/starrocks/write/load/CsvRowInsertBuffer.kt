@@ -24,6 +24,8 @@ import io.airbyte.integrations.destination.starrocks.http.StreamLoadClient
 import io.github.oshai.kotlinlogging.KotlinLogging
 import java.io.ByteArrayOutputStream
 import java.security.MessageDigest
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
 
 private val log = KotlinLogging.logger {}
 
@@ -148,8 +150,12 @@ class CsvRowInsertBuffer(
             is DateValue -> value.value.toString()
             is TimeWithTimezoneValue -> value.value.toString()
             is TimeWithoutTimezoneValue -> value.value.toString()
-            is TimestampWithTimezoneValue -> value.value.toString()
-            is TimestampWithoutTimezoneValue -> value.value.toString()
+            // StarRocks DATETIME wants `yyyy-MM-dd HH:mm:ss` (space, no `T`/`Z`). `toString()` emits
+            // ISO-8601 with a `T` (and trailing offset for tz-aware), which relies on lenient parsing
+            // and drops the offset. Format explicitly; normalize tz-aware values to UTC first (#34).
+            is TimestampWithTimezoneValue ->
+                value.value.withOffsetSameInstant(ZoneOffset.UTC).format(SR_DATETIME)
+            is TimestampWithoutTimezoneValue -> value.value.format(SR_DATETIME)
             is ObjectValue -> quote(value.values.serializeToString())
             is ArrayValue -> quote(value.values.serializeToString())
         }
@@ -168,6 +174,8 @@ class CsvRowInsertBuffer(
         MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 
     companion object {
+        /** StarRocks DATETIME literal format (space-separated, no `T`/timezone). */
+        private val SR_DATETIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
         const val COLUMN_SEPARATOR = ","
         const val ROW_DELIMITER = "\n"
         const val NULL_MARKER = "\\N"
