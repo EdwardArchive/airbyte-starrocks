@@ -114,10 +114,14 @@ class StarrocksAirbyteClient(
     }
 
     override suspend fun overwriteTable(sourceTableName: TableName, targetTableName: TableName) {
-        // StarRocks atomically swaps the two tables' data/schema; we then drop the (now-source) leftover.
+        // StarRocks atomically swaps the two tables' data/schema; the SWAP WITH operand must be an
+        // unqualified name (same database). We then drop the (now-source) leftover.
         execute(
-            "ALTER TABLE `${targetTableName.namespace}`.`${targetTableName.name}` " +
-                "SWAP WITH `${sourceTableName.namespace}`.`${sourceTableName.name}`",
+            sqlGenerator.swapTable(
+                targetTableName.namespace,
+                targetTableName.name,
+                sourceTableName.name,
+            ),
         )
         execute(sqlGenerator.dropTable(sourceTableName.namespace, sourceTableName.name))
     }

@@ -73,4 +73,16 @@ class StarrocksSqlGeneratorTest {
         assertEquals("CREATE DATABASE IF NOT EXISTS `airbyte`", gen.createDatabase("airbyte"))
         assertEquals("DROP TABLE IF EXISTS `db`.`t`", gen.dropTable("db", "t"))
     }
+
+    @Test
+    fun `swap target is qualified but the SWAP WITH operand is unqualified`() {
+        // Regression: a 2nd overwrite sync emitted `SWAP WITH \`db\`.\`tmp\``, which StarRocks rejects
+        // with "Unexpected input '.'". The operand must be an unqualified, same-database table name.
+        val sql = gen.swapTable("e2e_fro", "nation", "nation_airbyte_tmp")
+        assertEquals("ALTER TABLE `e2e_fro`.`nation` SWAP WITH `nation_airbyte_tmp`", sql)
+        assertFalse(
+            sql.substringAfter("SWAP WITH").contains("."),
+            "SWAP WITH operand must not be database-qualified",
+        )
+    }
 }

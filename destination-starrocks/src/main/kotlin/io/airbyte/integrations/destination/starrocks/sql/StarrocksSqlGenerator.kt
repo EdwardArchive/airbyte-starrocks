@@ -27,6 +27,14 @@ class StarrocksSqlGenerator {
     fun dropTable(database: String, table: String): String =
         "DROP TABLE IF EXISTS `$database`.`$table`"
 
+    /**
+     * Atomically swaps the data and schema of [target] with [withTable]. StarRocks requires the
+     * `SWAP WITH` operand to be an UNQUALIFIED table name (resolved in [target]'s database); a
+     * `db.table` operand is a syntax error. Both tables must therefore live in [database].
+     */
+    fun swapTable(database: String, target: String, withTable: String): String =
+        "ALTER TABLE `$database`.`$target` SWAP WITH `$withTable`"
+
     fun createTable(
         database: String,
         table: String,
