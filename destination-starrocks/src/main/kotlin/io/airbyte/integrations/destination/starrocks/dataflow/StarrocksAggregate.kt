@@ -45,7 +45,10 @@ class StarrocksAggregateFactory(
 ) : AggregateFactory {
 
     override fun create(key: DestinationStream.Descriptor): Aggregate {
-        val tableName = streamStateStore.get(key)!!.tableName
+        val tableName =
+            requireNotNull(streamStateStore.get(key)) {
+                "No Stream Load execution config for stream '${key.name}'"
+            }.tableName
         val stream = catalog.getStream(key)
         val cdcDelete = cdcDeleteEnabled(stream)
 
