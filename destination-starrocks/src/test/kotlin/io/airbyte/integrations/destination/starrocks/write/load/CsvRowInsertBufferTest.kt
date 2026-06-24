@@ -10,10 +10,15 @@ import io.airbyte.cdk.load.data.IntegerValue
 import io.airbyte.cdk.load.data.NullValue
 import io.airbyte.cdk.load.data.ObjectValue
 import io.airbyte.cdk.load.data.StringValue
+import io.airbyte.cdk.load.data.TimestampWithTimezoneValue
+import io.airbyte.cdk.load.data.TimestampWithoutTimezoneValue
 import io.airbyte.cdk.load.schema.model.TableName
 import io.airbyte.cdk.load.table.CDC_DELETED_AT_COLUMN
 import io.airbyte.integrations.destination.starrocks.http.StreamLoadClient
 import java.math.BigInteger
+import java.time.LocalDateTime
+import java.time.OffsetDateTime
+import java.time.ZoneOffset
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotEquals
@@ -117,6 +122,33 @@ class CsvRowInsertBufferTest {
         // Hard delete would emit __op=1 and drop the row; soft delete keeps it via __op=0.
         assertEquals("\"rid-9\",42,\"erin\",\"2026-01-01T00:00:00Z\",0", row)
         assertTrue(row.endsWith(",0"), "soft-deleted row must upsert (__op=0), got: $row")
+    }
+
+    @Test
+    fun `timestamps render as StarRocks DATETIME — space separated, no T or Z, tz normalized to UTC`() {
+        val buf = buffer(cdc = false)
+        // tz-aware 2026-06-24T10:53:44+09:00 -> UTC 01:53:44
+        buf.accumulate(
+            mapOf<String, AirbyteValue>(
+                "_airbyte_raw_id" to StringValue("rid-tz"),
+                "id" to IntegerValue(BigInteger.ONE),
+                "name" to
+                    TimestampWithTimezoneValue(
+                        OffsetDateTime.of(2026, 6, 24, 10, 53, 44, 0, ZoneOffset.ofHours(9)),
+                    ),
+            ),
+        )
+        // tz-naive stays as-is, just reformatted
+        buf.accumulate(
+            mapOf<String, AirbyteValue>(
+                "_airbyte_raw_id" to StringValue("rid-naive"),
+                "id" to IntegerValue(BigInteger.TWO),
+                "name" to TimestampWithoutTimezoneValue(LocalDateTime.of(2026, 6, 24, 8, 0, 1)),
+            ),
+        )
+        val rows = buf.csvSnapshot().trim('\n').split("\n")
+        assertEquals("\"rid-tz\",1,2026-06-24 01:53:44,\\N", rows[0])
+        assertEquals("\"rid-naive\",2,2026-06-24 08:00:01,\\N", rows[1])
     }
 
     @Test
