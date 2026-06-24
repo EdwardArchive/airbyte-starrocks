@@ -16,6 +16,7 @@ import io.airbyte.integrations.destination.starrocks.http.StreamLoadClient
 import java.math.BigInteger
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -116,6 +117,19 @@ class CsvRowInsertBufferTest {
         // Hard delete would emit __op=1 and drop the row; soft delete keeps it via __op=0.
         assertEquals("\"rid-9\",42,\"erin\",\"2026-01-01T00:00:00Z\",0", row)
         assertTrue(row.endsWith(",0"), "soft-deleted row must upsert (__op=0), got: $row")
+    }
+
+    @Test
+    fun `streamLoadLabel is stable for identical content and differs for different content`() {
+        val buf = buffer(cdc = false)
+        val a = "\"rid-a\",1\n".toByteArray()
+        val b = "\"rid-b\",2\n".toByteArray()
+        // Same batch retried -> same label (StarRocks dedups via "Label Already Exists").
+        assertEquals(buf.streamLoadLabel(a), buf.streamLoadLabel(a))
+        // Different batch -> different label (no accidental dedup of distinct data).
+        assertNotEquals(buf.streamLoadLabel(a), buf.streamLoadLabel(b))
+        // Label must be safe to send as an HTTP header value.
+        assertTrue(buf.streamLoadLabel(a).none { it.isWhitespace() || it.isISOControl() })
     }
 
     @Test

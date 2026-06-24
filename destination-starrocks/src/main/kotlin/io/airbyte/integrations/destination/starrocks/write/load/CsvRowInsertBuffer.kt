@@ -23,7 +23,7 @@ import io.airbyte.cdk.load.util.serializeToString
 import io.airbyte.integrations.destination.starrocks.http.StreamLoadClient
 import io.github.oshai.kotlinlogging.KotlinLogging
 import java.io.ByteArrayOutputStream
-import java.util.UUID
+import java.security.MessageDigest
 
 private val log = KotlinLogging.logger {}
 
@@ -101,7 +101,12 @@ class CsvRowInsertBuffer(
             log.info { "No rows to flush for ${tableName.name}; skipping Stream Load" }
             return
         }
-        val label = "airbyte-${UUID.randomUUID()}"
+        val body = csv.toByteArray()
+        // Content-addressed label so a retry of the SAME batch is idempotent: every record carries a
+        // unique `_airbyte_raw_id`, so the CSV body (and its hash) is unique per distinct batch but
+        // byte-identical across retries of that batch. StarRocks then rejects the re-load with
+        // "Label Already Exists", which we treat as success — preventing duplicate rows on retry (#40).
+        val label = streamLoadLabel(body)
         val headers = streamLoadHeaders()
 
         log.info { "Stream Load of $rowCount rows into ${tableName.namespace}.${tableName.name}" }
@@ -111,15 +116,19 @@ class CsvRowInsertBuffer(
                 table = tableName.name,
                 label = label,
                 headers = headers,
-                body = csv.toByteArray(),
+                body = body,
             )
-        if (!response.isSuccess) {
+        if (!response.isSuccess && !response.labelAlreadyExists) {
             throw RuntimeException(
                 "Stream Load into ${tableName.namespace}.${tableName.name} failed " +
                     "(status=${response.status}, message=${response.message}, errorUrl=${response.errorUrl})",
             )
         }
-        log.info { "Stream Load finished: ${response.loadedRows} rows into ${tableName.name}" }
+        if (response.labelAlreadyExists) {
+            log.info { "Stream Load label $label already committed — treating as success (idempotent retry)" }
+        } else {
+            log.info { "Stream Load finished: ${response.loadedRows} rows into ${tableName.name}" }
+        }
     }
 
     /**
@@ -147,6 +156,16 @@ class CsvRowInsertBuffer(
 
     /** Encloses a field in `"` and doubles any internal `"` (StarRocks `enclose`/`escape` default). */
     private fun quote(raw: String): String = "\"" + raw.replace("\"", "\"\"") + "\""
+
+    /**
+     * Content-addressed Stream Load label: stable across retries of the same batch (identical body,
+     * since each record carries a unique `_airbyte_raw_id`) and distinct across different batches.
+     */
+    internal fun streamLoadLabel(body: ByteArray): String =
+        "airbyte-${tableName.name.take(48)}-${sha256Hex(body)}"
+
+    private fun sha256Hex(bytes: ByteArray): String =
+        MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 
     companion object {
         const val COLUMN_SEPARATOR = ","
