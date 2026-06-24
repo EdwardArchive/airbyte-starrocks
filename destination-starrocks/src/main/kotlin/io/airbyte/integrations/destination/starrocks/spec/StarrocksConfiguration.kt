@@ -49,6 +49,6 @@ class StarrocksConfigurationFactory :
             database = pojo.database,
             ssl = pojo.ssl,
             enableJson = pojo.enableJson,
-            cdcSoftDelete = pojo.cdcSoftDelete,
+            cdcSoftDelete = CdcDeletionMode.isSoftDelete(pojo.cdcDeletionMode),
         )
 }
