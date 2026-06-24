@@ -4,6 +4,14 @@
 
 package io.airbyte.integrations.destination.starrocks.sql
 
+/**
+ * Escapes a StarRocks identifier (database/table/column name) by doubling any internal backtick and
+ * wrapping the result in backticks. ALL DDL identifier interpolation must go through this — a raw
+ * backtick in a source-controlled name would otherwise break out of the quoted identifier (issue
+ * #36). Use PreparedStatement parameters for values; this is for identifiers only.
+ */
+internal fun quoteIdent(name: String): String = "`" + name.replace("`", "``") + "`"
+
 /** A resolved StarRocks column (name + SQL type + nullability). */
 data class StarrocksColumn(val name: String, val sqlType: String, val nullable: Boolean)
 
@@ -22,10 +30,11 @@ enum class KeyModel {
  */
 class StarrocksSqlGenerator {
 
-    fun createDatabase(database: String): String = "CREATE DATABASE IF NOT EXISTS `$database`"
+    fun createDatabase(database: String): String =
+        "CREATE DATABASE IF NOT EXISTS ${quoteIdent(database)}"
 
     fun dropTable(database: String, table: String): String =
-        "DROP TABLE IF EXISTS `$database`.`$table`"
+        "DROP TABLE IF EXISTS ${quoteIdent(database)}.${quoteIdent(table)}"
 
     /**
      * Atomically swaps the data and schema of [target] with [withTable]. StarRocks requires the
@@ -33,7 +42,7 @@ class StarrocksSqlGenerator {
      * `db.table` operand is a syntax error. Both tables must therefore live in [database].
      */
     fun swapTable(database: String, target: String, withTable: String): String =
-        "ALTER TABLE `$database`.`$target` SWAP WITH `$withTable`"
+        "ALTER TABLE ${quoteIdent(database)}.${quoteIdent(target)} SWAP WITH ${quoteIdent(withTable)}"
 
     fun createTable(
         database: String,
@@ -54,15 +63,15 @@ class StarrocksSqlGenerator {
         val rest = columns.filter { it.name !in keyColumns }
         val columnLines =
             (keyDefs + rest).joinToString(",\n") { col ->
-                "  `${col.name}` ${col.sqlType}${if (col.nullable) "" else " NOT NULL"}"
+                "  ${quoteIdent(col.name)} ${col.sqlType}${if (col.nullable) "" else " NOT NULL"}"
             }
 
         val keyClause = if (model == KeyModel.PRIMARY) "PRIMARY KEY" else "DUPLICATE KEY"
-        val keyList = keyColumns.joinToString(", ") { "`$it`" }
+        val keyList = keyColumns.joinToString(", ") { quoteIdent(it) }
         val exists = if (ifNotExists) "IF NOT EXISTS " else ""
 
         return buildString {
-            append("CREATE TABLE ").append(exists).append("`$database`.`$table` (\n")
+            append("CREATE TABLE ").append(exists).append("${quoteIdent(database)}.${quoteIdent(table)} (\n")
             append(columnLines).append('\n')
             append(")\n")
             append("$keyClause ($keyList)\n")
