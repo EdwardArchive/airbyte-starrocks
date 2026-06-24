@@ -7,6 +7,7 @@ package io.airbyte.integrations.destination.starrocks.client
 import io.airbyte.cdk.load.command.Append
 import io.airbyte.cdk.load.command.Dedupe
 import io.airbyte.cdk.load.command.Overwrite
+import io.airbyte.integrations.destination.starrocks.schema.StarrocksSqlTypes
 import io.airbyte.integrations.destination.starrocks.sql.KeyModel
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
@@ -30,5 +31,20 @@ class StarrocksKeyModelTest {
             KeyModel.PRIMARY,
             keyModelFor(Dedupe(primaryKey = listOf(listOf("id")), cursor = emptyList())),
         )
+    }
+
+    @Test
+    fun `canonicalStarrocksType normalizes information_schema types to the mapper literals`() {
+        // Regression: a 2nd sync compared discovered `bigint` to canonical `BIGINT` and tried to
+        // ALTER the PRIMARY KEY columns (which StarRocks rejects). Normalization makes them equal.
+        assertEquals(StarrocksSqlTypes.BIGINT, canonicalStarrocksType("bigint"))
+        assertEquals(StarrocksSqlTypes.STRING, canonicalStarrocksType("varchar"))
+        assertEquals(StarrocksSqlTypes.STRING, canonicalStarrocksType("varchar(1048576)"))
+        assertEquals(StarrocksSqlTypes.DECIMAL, canonicalStarrocksType("decimal"))
+        assertEquals(StarrocksSqlTypes.DECIMAL, canonicalStarrocksType("decimal(38,9)"))
+        assertEquals(StarrocksSqlTypes.DATETIME, canonicalStarrocksType("datetime"))
+        assertEquals(StarrocksSqlTypes.DATE, canonicalStarrocksType("date"))
+        assertEquals(StarrocksSqlTypes.BOOLEAN, canonicalStarrocksType("boolean"))
+        assertEquals(StarrocksSqlTypes.JSON, canonicalStarrocksType("json"))
     }
 }
