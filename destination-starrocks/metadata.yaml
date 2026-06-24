@@ -2,7 +2,7 @@ data:
   connectorSubtype: database
   connectorType: destination
   definitionId: 5c4d966a-19ff-45d8-9687-876ad0f5d0d9
-  dockerImageTag: 2.0.0
+  dockerImageTag: 2.0.1
   dockerRepository: airbyte/destination-starrocks
   githubIssueLabel: destination-starrocks
   icon: starrocks.svg
@@ -17,6 +17,13 @@ data:
       enabled: true
   releaseStage: alpha
   supportLevel: community
+  # Required for Bulk-Load CDK destinations: the platform only populates the per-stream
+  # generationId/minimumGenerationId/syncId (which DestinationStreamFactory requires, non-null) for
+  # destinations that declare refresh support. Without it the platform sends null generationId and
+  # the CDK throws "getGenerationId(...) must not be null" before any write. (A raw custom-image
+  # registration does NOT read this file, so a custom-registered connector still needs the platform's
+  # actor_definition_version.supports_refreshes flag set.)
+  supportsRefreshes: true
   documentationUrl: https://docs.airbyte.com/integrations/destinations/starrocks
   tags:
     - language:kotlin
