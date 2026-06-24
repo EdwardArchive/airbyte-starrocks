@@ -40,6 +40,26 @@ internal fun keyModelFor(importType: ImportType): KeyModel =
     if (importType is Dedupe) KeyModel.PRIMARY else KeyModel.DUPLICATE
 
 /**
+ * Maps an `information_schema.columns.DATA_TYPE` value (lowercase, length stripped) back to the
+ * connector's canonical StarRocks type literal, so [StarrocksAirbyteClient.discoverSchema] compares
+ * equal to the mapper's output. Without this, a second sync sees every column as "changed" (e.g.
+ * discovered `bigint` vs canonical `BIGINT`) and tries to `ALTER ... MODIFY` the PRIMARY KEY columns,
+ * which StarRocks rejects ("Can not modify key column ... for primary key table").
+ */
+internal fun canonicalStarrocksType(dataType: String): String =
+    when (dataType.lowercase().substringBefore('(').trim()) {
+        "boolean" -> StarrocksSqlTypes.BOOLEAN
+        "bigint" -> StarrocksSqlTypes.BIGINT
+        "decimal", "decimalv2", "decimalv3", "decimal32", "decimal64", "decimal128" ->
+            StarrocksSqlTypes.DECIMAL
+        "date" -> StarrocksSqlTypes.DATE
+        "datetime" -> StarrocksSqlTypes.DATETIME
+        "varchar", "char", "string" -> StarrocksSqlTypes.STRING
+        "json" -> StarrocksSqlTypes.JSON
+        else -> dataType.uppercase()
+    }
+
+/**
  * StarRocks implementation of the CDK [TableOperationsClient] / [TableSchemaEvolutionClient]. All DDL
  * and table metadata run over the MySQL protocol (port 9030). High-volume row writes do NOT go
  * through here — they use Stream Load over HTTP (see the dataflow Aggregate). This mirrors
@@ -200,7 +220,7 @@ class StarrocksAirbyteClient(
                             if (name in META_COLUMNS) continue
                             val type = rs.getString("DATA_TYPE")
                             val nullable = rs.getString("IS_NULLABLE").equals("YES", ignoreCase = true)
-                            columns[name] = ColumnType(type, nullable)
+                            columns[name] = ColumnType(canonicalStarrocksType(type), nullable)
                         }
                     }
                 }
@@ -221,6 +241,10 @@ class StarrocksAirbyteClient(
     ) {
         if (columnChangeset.isNoop()) return
 
+        // StarRocks PRIMARY KEY columns are immutable — never ALTER them (belt-and-suspenders on top
+        // of canonicalStarrocksType, which prevents the spurious diffs that flagged them).
+        val keyColumns = describeTable(stream.tableSchema).second.toSet()
+
         columnChangeset.columnsToAdd.forEach { (name, type) ->
             execute(
                 "ALTER TABLE `${tableName.namespace}`.`${tableName.name}` " +
@@ -228,6 +252,10 @@ class StarrocksAirbyteClient(
             )
         }
         columnChangeset.columnsToChange.forEach { (name, change) ->
+            if (name in keyColumns) {
+                log.warn { "Skipping ALTER on key column `$name` — StarRocks PRIMARY KEY columns are immutable" }
+                return@forEach
+            }
             val type = change.newType
             execute(
                 "ALTER TABLE `${tableName.namespace}`.`${tableName.name}` " +
