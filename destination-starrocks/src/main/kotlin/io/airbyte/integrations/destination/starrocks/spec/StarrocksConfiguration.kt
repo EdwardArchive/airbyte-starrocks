@@ -23,6 +23,7 @@ data class StarrocksConfiguration(
     val database: String,
     val ssl: Boolean,
     val enableJson: Boolean,
+    val cdcSoftDelete: Boolean,
 ) : DestinationConfiguration() {
     val resolvedDatabase: String = database.ifEmpty { Defaults.DATABASE_NAME }
 
@@ -48,5 +49,6 @@ class StarrocksConfigurationFactory :
             database = pojo.database,
             ssl = pojo.ssl,
             enableJson = pojo.enableJson,
+            cdcSoftDelete = pojo.cdcSoftDelete,
         )
 }

@@ -18,7 +18,17 @@ class StarrocksTableSchemaMapperTest {
 
     private fun mapper(enableJson: Boolean) =
         StarrocksTableSchemaMapper(
-            StarrocksConfiguration("h", 9030, 8030, "u", "p", "db", ssl = false, enableJson = enableJson),
+            StarrocksConfiguration(
+                "h",
+                9030,
+                8030,
+                "u",
+                "p",
+                "db",
+                ssl = false,
+                enableJson = enableJson,
+                cdcSoftDelete = false,
+            ),
             DefaultTempTableNameGenerator(),
         )
 

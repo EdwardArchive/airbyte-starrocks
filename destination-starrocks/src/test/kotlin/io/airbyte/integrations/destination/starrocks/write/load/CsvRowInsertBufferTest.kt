@@ -95,6 +95,30 @@ class CsvRowInsertBufferTest {
     }
 
     @Test
+    fun `soft delete upserts (__op=0) even when deleted_at is present, retaining the tombstone`() {
+        val buf =
+            CsvRowInsertBuffer(
+                table,
+                columns,
+                cdcDeleteEnabled = true,
+                streamLoadClient = unusedClient,
+                softDelete = true,
+            )
+        buf.accumulate(
+            mapOf<String, AirbyteValue>(
+                "_airbyte_raw_id" to StringValue("rid-9"),
+                "id" to IntegerValue(BigInteger.valueOf(42)),
+                "name" to StringValue("erin"),
+                CDC_DELETED_AT_COLUMN to StringValue("2026-01-01T00:00:00Z"),
+            ),
+        )
+        val row = buf.csvSnapshot().trimEnd('\n')
+        // Hard delete would emit __op=1 and drop the row; soft delete keeps it via __op=0.
+        assertEquals("\"rid-9\",42,\"erin\",\"2026-01-01T00:00:00Z\",0", row)
+        assertTrue(row.endsWith(",0"), "soft-deleted row must upsert (__op=0), got: $row")
+    }
+
+    @Test
     fun `strings are quoted and internal quotes are doubled`() {
         val buf = buffer(cdc = false)
         buf.accumulate(

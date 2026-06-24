@@ -46,6 +46,11 @@ class CsvRowInsertBuffer(
     /** True for Dedupe streams whose schema includes the CDC `_ab_cdc_deleted_at` column. */
     private val cdcDeleteEnabled: Boolean,
     private val streamLoadClient: StreamLoadClient,
+    /**
+     * Soft-delete mode: keep CDC-deleted rows (upsert with `__op=0`) instead of removing them, so
+     * the `_ab_cdc_deleted_at` tombstone is retained in the PRIMARY KEY table.
+     */
+    private val softDelete: Boolean = false,
 ) {
     private val csv = ByteArrayOutputStream()
     private var rowCount = 0L
@@ -117,9 +122,12 @@ class CsvRowInsertBuffer(
         log.info { "Stream Load finished: ${response.loadedRows} rows into ${tableName.name}" }
     }
 
-    /** `__op` cell: 1 (delete) when the CDC deleted-at value is present, else 0 (upsert). */
+    /**
+     * `__op` cell: 1 (delete) when the CDC deleted-at value is present, else 0 (upsert). In
+     * soft-delete mode we always upsert (0), retaining the deleted row with its tombstone column.
+     */
     private fun opValue(deletedAt: AirbyteValue?): String =
-        if (deletedAt != null && deletedAt !is NullValue) DELETE_OP else UPSERT_OP
+        if (!softDelete && deletedAt != null && deletedAt !is NullValue) DELETE_OP else UPSERT_OP
 
     private fun renderCell(value: AirbyteValue): String =
         when (value) {
