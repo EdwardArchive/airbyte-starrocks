@@ -75,6 +75,28 @@ class StarrocksSqlGeneratorTest {
     }
 
     @Test
+    fun `quoteIdent doubles internal backticks so names cannot break out of the identifier`() {
+        assertEquals("`a`", quoteIdent("a"))
+        assertEquals("`a``b`", quoteIdent("a`b"))
+        // a name crafted to break out + inject is neutralized into a single quoted identifier
+        assertEquals("`x`` ; DROP TABLE t; --`", quoteIdent("x` ; DROP TABLE t; --"))
+    }
+
+    @Test
+    fun `DDL escapes identifiers containing backticks`() {
+        val cols =
+            listOf(
+                StarrocksColumn("ev`il", "BIGINT", nullable = false),
+                StarrocksColumn("name", "STRING", nullable = true),
+            )
+        val ddl = gen.createTable("d`b", "t`l", cols, keyColumns = listOf("ev`il"), model = KeyModel.PRIMARY)
+        assertTrue(ddl.contains("`d``b`.`t``l`"), "db/table names must be backtick-escaped")
+        assertTrue(ddl.contains("`ev``il` BIGINT NOT NULL"), "column name must be backtick-escaped")
+        assertEquals("DROP TABLE IF EXISTS `d``b`.`t``l`", gen.dropTable("d`b", "t`l"))
+        assertEquals("ALTER TABLE `db`.`a``b` SWAP WITH `c``d`", gen.swapTable("db", "a`b", "c`d"))
+    }
+
+    @Test
     fun `swap target is qualified but the SWAP WITH operand is unqualified`() {
         // Regression: a 2nd overwrite sync emitted `SWAP WITH \`db\`.\`tmp\``, which StarRocks rejects
         // with "Unexpected input '.'". The operand must be an unqualified, same-database table name.

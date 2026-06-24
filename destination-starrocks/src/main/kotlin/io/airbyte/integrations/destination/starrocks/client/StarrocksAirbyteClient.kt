@@ -22,6 +22,7 @@ import io.airbyte.cdk.load.table.ColumnNameMapping
 import io.airbyte.integrations.destination.starrocks.schema.StarrocksSqlTypes
 import io.airbyte.integrations.destination.starrocks.spec.StarrocksConfiguration
 import io.airbyte.integrations.destination.starrocks.sql.KeyModel
+import io.airbyte.integrations.destination.starrocks.sql.quoteIdent
 import io.airbyte.integrations.destination.starrocks.sql.StarrocksColumn
 import io.airbyte.integrations.destination.starrocks.sql.StarrocksSqlGenerator
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -132,10 +133,10 @@ class StarrocksAirbyteClient(
         targetTableName: TableName,
     ) {
         val cols =
-            (META_COLUMNS + columnNameMapping.values).joinToString(", ") { "`$it`" }
+            (META_COLUMNS + columnNameMapping.values).joinToString(", ") { quoteIdent(it) }
         execute(
-            "INSERT INTO `${targetTableName.namespace}`.`${targetTableName.name}` ($cols) " +
-                "SELECT $cols FROM `${sourceTableName.namespace}`.`${sourceTableName.name}`",
+            "INSERT INTO ${quoteIdent(targetTableName.namespace)}.${quoteIdent(targetTableName.name)} ($cols) " +
+                "SELECT $cols FROM ${quoteIdent(sourceTableName.namespace)}.${quoteIdent(sourceTableName.name)}",
         )
     }
 
@@ -180,7 +181,7 @@ class StarrocksAirbyteClient(
                 conn.createStatement().use { stmt ->
                     stmt
                         .executeQuery(
-                            "SELECT count(1) FROM `${tableName.namespace}`.`${tableName.name}`",
+                            "SELECT count(1) FROM ${quoteIdent(tableName.namespace)}.${quoteIdent(tableName.name)}",
                         )
                         .use { rs -> if (rs.next()) rs.getLong(1) else null }
                 }
@@ -197,8 +198,8 @@ class StarrocksAirbyteClient(
                 conn.createStatement().use { stmt ->
                     stmt
                         .executeQuery(
-                            "SELECT `$COLUMN_NAME_AB_GENERATION_ID` " +
-                                "FROM `${tableName.namespace}`.`${tableName.name}` LIMIT 1",
+                            "SELECT ${quoteIdent(COLUMN_NAME_AB_GENERATION_ID)} " +
+                                "FROM ${quoteIdent(tableName.namespace)}.${quoteIdent(tableName.name)} LIMIT 1",
                         )
                         .use { rs -> if (rs.next()) rs.getLong(1) else 0L }
                 }
@@ -249,10 +250,11 @@ class StarrocksAirbyteClient(
         // of canonicalStarrocksType, which prevents the spurious diffs that flagged them).
         val keyColumns = describeTable(stream.tableSchema).second.toSet()
 
+        val qualifiedTable = "${quoteIdent(tableName.namespace)}.${quoteIdent(tableName.name)}"
         columnChangeset.columnsToAdd.forEach { (name, type) ->
             execute(
-                "ALTER TABLE `${tableName.namespace}`.`${tableName.name}` " +
-                    "ADD COLUMN `$name` ${type.type}${if (type.nullable) " NULL" else " NOT NULL"}",
+                "ALTER TABLE $qualifiedTable " +
+                    "ADD COLUMN ${quoteIdent(name)} ${type.type}${if (type.nullable) " NULL" else " NOT NULL"}",
             )
         }
         columnChangeset.columnsToChange.forEach { (name, change) ->
@@ -262,14 +264,12 @@ class StarrocksAirbyteClient(
             }
             val type = change.newType
             execute(
-                "ALTER TABLE `${tableName.namespace}`.`${tableName.name}` " +
-                    "MODIFY COLUMN `$name` ${type.type}${if (type.nullable) " NULL" else " NOT NULL"}",
+                "ALTER TABLE $qualifiedTable " +
+                    "MODIFY COLUMN ${quoteIdent(name)} ${type.type}${if (type.nullable) " NULL" else " NOT NULL"}",
             )
         }
         columnChangeset.columnsToDrop.forEach { (name, _) ->
-            execute(
-                "ALTER TABLE `${tableName.namespace}`.`${tableName.name}` DROP COLUMN `$name`",
-            )
+            execute("ALTER TABLE $qualifiedTable DROP COLUMN ${quoteIdent(name)}")
         }
     }
 
