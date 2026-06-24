@@ -175,39 +175,36 @@ class StarrocksAirbyteClient(
                 }
         }
 
-    override suspend fun countTable(tableName: TableName): Long? =
-        try {
-            withConnection { conn ->
-                conn.createStatement().use { stmt ->
-                    stmt
-                        .executeQuery(
-                            "SELECT count(1) FROM ${quoteIdent(tableName.namespace)}.${quoteIdent(tableName.name)}",
-                        )
-                        .use { rs -> if (rs.next()) rs.getLong(1) else null }
-                }
+    // A genuinely missing table is reported as null ("absent") via the explicit existence check;
+    // any other (connection/auth/query) error propagates rather than being silently swallowed (#42).
+    override suspend fun countTable(tableName: TableName): Long? {
+        if (!tableExists(tableName)) return null
+        return withConnection { conn ->
+            conn.createStatement().use { stmt ->
+                stmt
+                    .executeQuery(
+                        "SELECT count(1) FROM ${quoteIdent(tableName.namespace)}.${quoteIdent(tableName.name)}",
+                    )
+                    .use { rs -> if (rs.next()) rs.getLong(1) else null }
             }
-        } catch (e: Exception) {
-            // Missing table -> treat as "does not exist" so the CDK sees it as empty.
-            log.debug(e) { "countTable failed for $tableName (treating as absent)" }
-            null
         }
+    }
 
-    override suspend fun getGenerationId(tableName: TableName): Long =
-        try {
-            withConnection { conn ->
-                conn.createStatement().use { stmt ->
-                    stmt
-                        .executeQuery(
-                            "SELECT ${quoteIdent(COLUMN_NAME_AB_GENERATION_ID)} " +
-                                "FROM ${quoteIdent(tableName.namespace)}.${quoteIdent(tableName.name)} LIMIT 1",
-                        )
-                        .use { rs -> if (rs.next()) rs.getLong(1) else 0L }
-                }
+    // MAX (not LIMIT 1 without ORDER BY) so the generation id is deterministic even when the table
+    // holds rows from multiple generations (#41). Missing table -> 0L; other errors propagate (#42).
+    override suspend fun getGenerationId(tableName: TableName): Long {
+        if (!tableExists(tableName)) return 0L
+        return withConnection { conn ->
+            conn.createStatement().use { stmt ->
+                stmt
+                    .executeQuery(
+                        "SELECT MAX(${quoteIdent(COLUMN_NAME_AB_GENERATION_ID)}) " +
+                            "FROM ${quoteIdent(tableName.namespace)}.${quoteIdent(tableName.name)}",
+                    )
+                    .use { rs -> if (rs.next()) rs.getLong(1) else 0L }
             }
-        } catch (e: Exception) {
-            log.error(e) { "Failed to read generation id from $tableName" }
-            0L
         }
+    }
 
     override suspend fun discoverSchema(tableName: TableName): TableSchema =
         withConnection { conn ->
