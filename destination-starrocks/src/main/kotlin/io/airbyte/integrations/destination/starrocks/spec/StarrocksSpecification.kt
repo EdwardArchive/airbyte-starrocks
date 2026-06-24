@@ -88,14 +88,14 @@ class StarrocksSpecification : ConfigurationSpecification() {
             """{"order": 8, "default": "Hard delete", "enum": ["Hard delete", "Soft delete"], "group": "connection"}""",
     )
     val cdcDeletionMode: String = CdcDeletionMode.HARD_DELETE
-
-    val cdcSoftDelete: Boolean
-        get() = cdcDeletionMode.equals(CdcDeletionMode.SOFT_DELETE, ignoreCase = true)
 }
 
 object CdcDeletionMode {
     const val HARD_DELETE = "Hard delete"
     const val SOFT_DELETE = "Soft delete"
+
+    /** Whether the configured mode is soft delete (retain rows with the tombstone). */
+    fun isSoftDelete(mode: String): Boolean = mode.equals(SOFT_DELETE, ignoreCase = true)
 }
 
 @Singleton
