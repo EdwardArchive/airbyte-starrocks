@@ -38,7 +38,12 @@ class StarrocksWriter(
 
     override suspend fun setup() {
         catalog.streams
-            .map { it.tableSchema.tableNames.finalTableName!!.namespace }
+            .map { stream ->
+                requireNotNull(stream.tableSchema.tableNames.finalTableName) {
+                    "Stream '${stream.unmappedName}' has no final table name"
+                }
+                    .namespace
+            }
             .toSet()
             .forEach { starrocksClient.createNamespace(it) }
 
@@ -46,9 +51,18 @@ class StarrocksWriter(
     }
 
     override fun createStreamLoader(stream: DestinationStream): StreamLoader {
-        val initialStatus = initialStatuses[stream]!!
-        val realTableName = stream.tableSchema.tableNames.finalTableName!!
-        val tempTableName = stream.tableSchema.tableNames.tempTableName!!
+        val initialStatus =
+            requireNotNull(initialStatuses[stream]) {
+                "No gathered initial status for stream '${stream.unmappedName}'"
+            }
+        val realTableName =
+            requireNotNull(stream.tableSchema.tableNames.finalTableName) {
+                "Stream '${stream.unmappedName}' has no final table name"
+            }
+        val tempTableName =
+            requireNotNull(stream.tableSchema.tableNames.tempTableName) {
+                "Stream '${stream.unmappedName}' has no temp table name"
+            }
         val columnNameMapping =
             ColumnNameMapping(stream.tableSchema.columnSchema.inputToFinalColumnNames)
 
