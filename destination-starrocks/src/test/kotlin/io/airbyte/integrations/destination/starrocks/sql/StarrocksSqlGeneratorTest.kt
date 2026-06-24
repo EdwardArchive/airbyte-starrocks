@@ -5,6 +5,7 @@
 package io.airbyte.integrations.destination.starrocks.sql
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
@@ -56,6 +57,8 @@ class StarrocksSqlGeneratorTest {
             )
         assertTrue(ddl.contains("DUPLICATE KEY (`_airbyte_raw_id`)"))
         assertTrue(ddl.contains("DISTRIBUTED BY HASH (`_airbyte_raw_id`)"))
+        // Must NOT be a PRIMARY KEY table — that would let StarRocks dedup append rows by key.
+        assertFalse(ddl.contains("PRIMARY KEY"), "append table must not use PRIMARY KEY (would dedup)")
     }
 
     @Test

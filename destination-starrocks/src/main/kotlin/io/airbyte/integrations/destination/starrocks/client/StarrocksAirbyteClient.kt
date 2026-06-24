@@ -6,6 +6,7 @@ package io.airbyte.integrations.destination.starrocks.client
 
 import io.airbyte.cdk.load.command.Dedupe
 import io.airbyte.cdk.load.command.DestinationStream
+import io.airbyte.cdk.load.command.ImportType
 import io.airbyte.cdk.load.component.ColumnChangeset
 import io.airbyte.cdk.load.component.ColumnType
 import io.airbyte.cdk.load.component.TableOperationsClient
@@ -28,6 +29,15 @@ import java.sql.Connection
 import java.sql.DriverManager
 
 private val log = KotlinLogging.logger {}
+
+/**
+ * Append/Overwrite -> DUPLICATE KEY (StarRocks keeps every row; a DUPLICATE key is NOT a uniqueness
+ * constraint, and the key is the per-record unique `_airbyte_raw_id`, so append never collapses
+ * business-duplicate records). Dedupe -> PRIMARY KEY (StarRocks upserts/deletes by key at load time
+ * via `__op`). This is the guard against accidental dedup of append data.
+ */
+internal fun keyModelFor(importType: ImportType): KeyModel =
+    if (importType is Dedupe) KeyModel.PRIMARY else KeyModel.DUPLICATE
 
 /**
  * StarRocks implementation of the CDK [TableOperationsClient] / [TableSchemaEvolutionClient]. All DDL
@@ -251,14 +261,11 @@ class StarrocksAirbyteClient(
                 StarrocksColumn(name, type.type, type.nullable)
             }
 
-        return when (val importType = tableSchema.importType) {
-            is Dedupe -> {
-                val pks = importType.primaryKey.map { it.single() }
-                Triple(metaColumns + userColumns, pks, KeyModel.PRIMARY)
-            }
-            else ->
-                Triple(metaColumns + userColumns, listOf(COLUMN_NAME_AB_RAW_ID), KeyModel.DUPLICATE)
-        }
+        val importType = tableSchema.importType
+        val keyColumns =
+            if (importType is Dedupe) importType.primaryKey.map { it.single() }
+            else listOf(COLUMN_NAME_AB_RAW_ID)
+        return Triple(metaColumns + userColumns, keyColumns, keyModelFor(importType))
     }
 
     companion object {
