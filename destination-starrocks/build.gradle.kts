@@ -27,8 +27,12 @@ dependencies {
     // 9030 MySQL protocol: DDL + `SELECT current_version()` (used from issue #8 onward).
     implementation("com.mysql:mysql-connector-j:8.4.0")
 
+    // OkHttp for the Stream Load client (also transitive via toolkit-load-http; pinned to match).
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.10.2")
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 }
 
 application {
