@@ -47,12 +47,20 @@ class StarrocksAggregateFactory(
     override fun create(key: DestinationStream.Descriptor): Aggregate {
         val tableName = streamStateStore.get(key)!!.tableName
         val stream = catalog.getStream(key)
+        val cdcDelete = cdcDeleteEnabled(stream)
+
+        // The CDC delete path appends an `__op` column; a source column already named `__op`
+        // (reserved in StarRocks >= 3.3.6) would collide and corrupt the load — fail clearly (#45).
+        require(!(cdcDelete && CsvRowInsertBuffer.OP_COLUMN in stream.tableSchema.columnSchema.finalSchema.keys)) {
+            "Stream '${key.name}' has a column named '${CsvRowInsertBuffer.OP_COLUMN}', which collides " +
+                "with the CDC operation column StarRocks uses for load-time delete/upsert. Rename it at the source."
+        }
 
         val buffer =
             CsvRowInsertBuffer(
                 tableName = tableName,
                 columns = finalColumns(stream),
-                cdcDeleteEnabled = cdcDeleteEnabled(stream),
+                cdcDeleteEnabled = cdcDelete,
                 streamLoadClient = streamLoadClient,
                 softDelete = config.cdcSoftDelete,
             )
