@@ -53,12 +53,12 @@ class CsvRowInsertBuffer(
      * the `_ab_cdc_deleted_at` tombstone is retained in the PRIMARY KEY table.
      */
     private val softDelete: Boolean = false,
-) {
+) : RowInsertBuffer {
     private val csv = ByteArrayOutputStream()
     private var rowCount = 0L
 
     /** Appends one CSV row built from [recordFields], keyed by final column name. */
-    fun accumulate(recordFields: Map<String, AirbyteValue>) {
+    override fun accumulate(recordFields: Map<String, AirbyteValue>) {
         val row = StringBuilder()
         columns.forEachIndexed { i, column ->
             if (i > 0) row.append(COLUMN_SEPARATOR)
@@ -98,7 +98,7 @@ class CsvRowInsertBuffer(
             "columns" to columnsHeader(),
         )
 
-    suspend fun flush() {
+    override suspend fun flush() {
         if (rowCount == 0L) {
             log.info { "No rows to flush for ${tableName.name}; skipping Stream Load" }
             return

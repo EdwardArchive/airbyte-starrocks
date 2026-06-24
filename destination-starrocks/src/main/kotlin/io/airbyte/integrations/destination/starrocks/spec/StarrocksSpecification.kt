@@ -88,6 +88,18 @@ class StarrocksSpecification : ConfigurationSpecification() {
             """{"order": 8, "default": "Hard delete", "enum": ["Hard delete", "Soft delete"], "group": "connection"}""",
     )
     val cdcDeletionMode: String = CdcDeletionMode.HARD_DELETE
+
+    @get:JsonSchemaTitle("Load Format")
+    @get:JsonPropertyDescription(
+        "Stream Load body format. CSV is compact and high-throughput (default). JSON avoids CSV " +
+            "escaping edge cases (e.g. a literal \\N string being stored as NULL) and preserves large " +
+            "integer/decimal precision, at some throughput cost.",
+    )
+    @get:JsonProperty("load_format")
+    @get:JsonSchemaInject(
+        json = """{"order": 9, "default": "CSV", "enum": ["CSV", "JSON"], "group": "connection"}""",
+    )
+    val loadFormat: String = LoadFormat.CSV
 }
 
 object CdcDeletionMode {
@@ -96,6 +108,13 @@ object CdcDeletionMode {
 
     /** Whether the configured mode is soft delete (retain rows with the tombstone). */
     fun isSoftDelete(mode: String): Boolean = mode.equals(SOFT_DELETE, ignoreCase = true)
+}
+
+object LoadFormat {
+    const val CSV = "CSV"
+    const val JSON = "JSON"
+
+    fun isJson(format: String): Boolean = format.equals(JSON, ignoreCase = true)
 }
 
 @Singleton
