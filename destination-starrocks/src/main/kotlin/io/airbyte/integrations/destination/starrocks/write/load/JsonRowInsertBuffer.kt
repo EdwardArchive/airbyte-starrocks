@@ -26,9 +26,11 @@ import io.airbyte.cdk.load.util.serializeToString
 import io.airbyte.integrations.destination.starrocks.http.StreamLoadClient
 import io.airbyte.integrations.destination.starrocks.write.load.CsvRowInsertBuffer.Companion.OP_COLUMN
 import io.github.oshai.kotlinlogging.KotlinLogging
+import java.io.ByteArrayOutputStream
 import java.security.MessageDigest
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
+import java.util.zip.GZIPOutputStream
 
 private val log = KotlinLogging.logger {}
 
@@ -50,6 +52,11 @@ class JsonRowInsertBuffer(
     private val cdcDeleteEnabled: Boolean,
     private val streamLoadClient: StreamLoadClient,
     private val softDelete: Boolean = false,
+    /**
+     * gzip the request body and send `compression: gzip`. Only set when the cluster supports
+     * request-body compression (>= 3.3.2); StarRocks honors it for JSON Stream Load only.
+     */
+    private val compress: Boolean = false,
 ) : RowInsertBuffer {
     private val mapper = ObjectMapper()
     private val rows: ArrayNode = mapper.createArrayNode()
@@ -85,16 +92,24 @@ class JsonRowInsertBuffer(
             log.info { "No rows to flush for ${tableName.name}; skipping Stream Load" }
             return
         }
-        val body = mapper.writeValueAsBytes(rows)
-        val label = streamLoadLabel(body)
+        val rawBody = mapper.writeValueAsBytes(rows)
+        // Label is content-addressed on the UNCOMPRESSED body so a batch's identity (hence idempotent
+        // retry — #40) is independent of whether/how it was compressed.
+        val label = streamLoadLabel(rawBody)
+        val body = if (compress) gzip(rawBody) else rawBody
+        val headers =
+            if (compress) streamLoadHeaders() + ("compression" to "gzip") else streamLoadHeaders()
 
-        log.info { "Stream Load (JSON) of ${rows.size()} rows into ${tableName.namespace}.${tableName.name}" }
+        log.info {
+            val how = if (compress) "JSON, gzip ${rawBody.size}->${body.size}B" else "JSON"
+            "Stream Load ($how) of ${rows.size()} rows into ${tableName.namespace}.${tableName.name}"
+        }
         val response =
             streamLoadClient.streamLoad(
                 database = tableName.namespace,
                 table = tableName.name,
                 label = label,
-                headers = streamLoadHeaders(),
+                headers = headers,
                 body = body,
             )
         if (!response.isSuccess && !response.labelAlreadyExists) {
@@ -136,6 +151,14 @@ class JsonRowInsertBuffer(
 
     private fun sha256Hex(bytes: ByteArray): String =
         MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+
+    /** gzip a byte array. Java's GZIPOutputStream writes a fixed header (mtime=0), so it is
+     * deterministic for identical input. */
+    internal fun gzip(data: ByteArray): ByteArray {
+        val baos = ByteArrayOutputStream(data.size / 2)
+        GZIPOutputStream(baos).use { it.write(data) }
+        return baos.toByteArray()
+    }
 
     companion object {
         private val SR_DATETIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")

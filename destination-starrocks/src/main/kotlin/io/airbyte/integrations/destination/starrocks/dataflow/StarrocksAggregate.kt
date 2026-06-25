@@ -19,6 +19,7 @@ import io.airbyte.cdk.load.table.directload.DirectLoadTableExecutionConfig
 import io.airbyte.cdk.load.write.StreamStateStore
 import io.airbyte.integrations.destination.starrocks.http.StreamLoadClient
 import io.airbyte.integrations.destination.starrocks.spec.StarrocksConfiguration
+import io.airbyte.integrations.destination.starrocks.version.StarrocksVersionGate
 import io.airbyte.integrations.destination.starrocks.write.load.CsvRowInsertBuffer
 import io.airbyte.integrations.destination.starrocks.write.load.JsonRowInsertBuffer
 import io.airbyte.integrations.destination.starrocks.write.load.RowInsertBuffer
@@ -44,6 +45,7 @@ class StarrocksAggregateFactory(
     private val streamStateStore: StreamStateStore<DirectLoadTableExecutionConfig>,
     private val streamLoadClient: StreamLoadClient,
     private val config: StarrocksConfiguration,
+    private val capabilities: StarrocksVersionGate.Capabilities,
 ) : AggregateFactory {
 
     override fun create(key: DestinationStream.Descriptor): Aggregate {
@@ -64,7 +66,18 @@ class StarrocksAggregateFactory(
         val columns = finalColumns(stream)
         val buffer: RowInsertBuffer =
             if (config.loadAsJson) {
-                JsonRowInsertBuffer(tableName, columns, cdcDelete, streamLoadClient, config.cdcSoftDelete)
+                // gzip only when requested AND the detected version supports request-body compression
+                // (>= 3.3.2). `check` already fails fast on gzip+CSV or gzip+old-cluster; this is the
+                // write-time guard that actually flips it on.
+                val compress = config.compressGzip && capabilities.compression
+                JsonRowInsertBuffer(
+                    tableName,
+                    columns,
+                    cdcDelete,
+                    streamLoadClient,
+                    config.cdcSoftDelete,
+                    compress = compress,
+                )
             } else {
                 CsvRowInsertBuffer(tableName, columns, cdcDelete, streamLoadClient, config.cdcSoftDelete)
             }
