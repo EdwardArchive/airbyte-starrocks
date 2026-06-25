@@ -29,6 +29,7 @@ class StarrocksTableSchemaMapperTest {
                 enableJson = enableJson,
                 cdcSoftDelete = false,
                 loadAsJson = false,
+                sslMode = "required",
             ),
             DefaultTempTableNameGenerator(),
         )
