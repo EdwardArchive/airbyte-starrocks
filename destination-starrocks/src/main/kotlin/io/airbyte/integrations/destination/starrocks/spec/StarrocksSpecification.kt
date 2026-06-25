@@ -100,6 +100,19 @@ class StarrocksSpecification : ConfigurationSpecification() {
         json = """{"order": 9, "default": "CSV", "enum": ["CSV", "JSON"], "group": "connection"}""",
     )
     val loadFormat: String = LoadFormat.CSV
+
+    @get:JsonSchemaTitle("SSL Mode")
+    @get:JsonPropertyDescription(
+        "Certificate verification for the SSL (JDBC) connection when SSL is enabled. 'required' " +
+            "encrypts but does not verify the server certificate (use for self-signed certs); " +
+            "'verify_ca'/'verify_identity' verify the certificate against the JVM trust store.",
+    )
+    @get:JsonProperty("ssl_mode")
+    @get:JsonSchemaInject(
+        json =
+            """{"order": 10, "default": "required", "enum": ["required", "verify_ca", "verify_identity"], "group": "connection"}""",
+    )
+    val sslMode: String = SslMode.REQUIRED
 }
 
 object CdcDeletionMode {
@@ -115,6 +128,20 @@ object LoadFormat {
     const val JSON = "JSON"
 
     fun isJson(format: String): Boolean = format.equals(JSON, ignoreCase = true)
+}
+
+object SslMode {
+    const val REQUIRED = "required"
+    const val VERIFY_CA = "verify_ca"
+    const val VERIFY_IDENTITY = "verify_identity"
+
+    /** Maps the spec value to a MySQL connector-j `sslMode` (used only when ssl is enabled). */
+    fun toConnectorJ(mode: String): String =
+        when (mode.lowercase()) {
+            VERIFY_CA -> "VERIFY_CA"
+            VERIFY_IDENTITY -> "VERIFY_IDENTITY"
+            else -> "REQUIRED"
+        }
 }
 
 @Singleton

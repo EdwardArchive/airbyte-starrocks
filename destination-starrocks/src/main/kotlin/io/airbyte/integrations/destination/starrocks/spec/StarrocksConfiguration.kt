@@ -25,12 +25,22 @@ data class StarrocksConfiguration(
     val enableJson: Boolean,
     val cdcSoftDelete: Boolean,
     val loadAsJson: Boolean,
+    val sslMode: String,
 ) : DestinationConfiguration() {
     val resolvedDatabase: String = database.ifEmpty { Defaults.DATABASE_NAME }
 
-    /** JDBC URL without a default schema — used for connectivity/`current_version()` checks. */
+    /**
+     * JDBC URL without a default schema. When ssl is on, `sslMode` selects the verification level
+     * (REQUIRED = encrypt only; VERIFY_CA/VERIFY_IDENTITY = verify against the JVM trust store).
+     * When off, SSL is disabled. (Replaces the old `useSSL`/`requireSSL` pair, which encrypted but
+     * never authenticated the server — issue #39.)
+     */
     val jdbcUrl: String =
-        "jdbc:mysql://$host:$port/?useSSL=$ssl" + if (ssl) "&requireSSL=true" else ""
+        if (ssl) {
+            "jdbc:mysql://$host:$port/?sslMode=${SslMode.toConnectorJ(sslMode)}"
+        } else {
+            "jdbc:mysql://$host:$port/?sslMode=DISABLED"
+        }
 
     object Defaults {
         const val DATABASE_NAME = "default"
@@ -52,5 +62,6 @@ class StarrocksConfigurationFactory :
             enableJson = pojo.enableJson,
             cdcSoftDelete = CdcDeletionMode.isSoftDelete(pojo.cdcDeletionMode),
             loadAsJson = LoadFormat.isJson(pojo.loadFormat),
+            sslMode = pojo.sslMode,
         )
 }
