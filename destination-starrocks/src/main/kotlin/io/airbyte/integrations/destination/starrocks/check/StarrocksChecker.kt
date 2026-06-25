@@ -45,6 +45,20 @@ class StarrocksChecker(
             require(!version.isNullOrBlank()) { "StarRocks check failed: empty version string" }
             StarrocksVersionGate.validate(version)
 
+            // Fail fast on an unsupported compression combo rather than silently sending an
+            // uncompressed/garbled body at write time (StarRocks compresses JSON bodies only, >= 3.3.2).
+            if (config.compressGzip) {
+                require(config.loadAsJson) {
+                    "StarRocks check failed: load_compression=gzip requires the JSON load format — " +
+                        "StarRocks does not decompress CSV Stream Load bodies. Set load_format=JSON or " +
+                        "load_compression=none."
+                }
+                require(StarrocksVersionGate.capabilities(version).compression) {
+                    "StarRocks check failed: load_compression=gzip requires StarRocks >= " +
+                        "${StarrocksVersionGate.MIN_COMPRESSION}; detected $version. Set load_compression=none."
+                }
+            }
+
             validateStreamLoad(conn)
         }
     }

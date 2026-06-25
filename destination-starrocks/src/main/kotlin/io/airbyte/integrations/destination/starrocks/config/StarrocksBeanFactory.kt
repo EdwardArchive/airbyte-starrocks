@@ -18,6 +18,7 @@ import io.airbyte.integrations.destination.starrocks.spec.StarrocksConfiguration
 import io.airbyte.integrations.destination.starrocks.spec.StarrocksConfigurationFactory
 import io.airbyte.integrations.destination.starrocks.spec.StarrocksSpecification
 import io.airbyte.integrations.destination.starrocks.sql.StarrocksSqlGenerator
+import io.airbyte.integrations.destination.starrocks.version.StarrocksVersionGate
 import io.micronaut.context.annotation.Factory
 import jakarta.inject.Singleton
 
@@ -58,6 +59,15 @@ class StarrocksBeanFactory {
         config: StarrocksConfiguration,
         sqlGenerator: StarrocksSqlGenerator,
     ): StarrocksAirbyteClient = StarrocksAirbyteClient(config, sqlGenerator)
+
+    /**
+     * Version-detected Stream Load capabilities (compression, Merge Commit, …), resolved once at
+     * write start from `SELECT current_version()`. Lets the load path opt into higher-version
+     * features up to the 4.1.x ceiling. Lazy/`write`-only, so `spec` never hits the cluster.
+     */
+    @Singleton
+    fun starrocksCapabilities(client: StarrocksAirbyteClient): StarrocksVersionGate.Capabilities =
+        StarrocksVersionGate.capabilities(client.serverVersion())
 
     @Singleton
     fun tempTableNameGenerator(): TempTableNameGenerator = DefaultTempTableNameGenerator()

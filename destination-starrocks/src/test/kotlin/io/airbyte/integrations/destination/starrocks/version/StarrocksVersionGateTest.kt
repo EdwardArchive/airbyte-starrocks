@@ -31,6 +31,7 @@ class StarrocksVersionGateTest {
         assertTrue(c.pkDedup)
         assertTrue(c.columnModePartialUpdate)
         assertTrue(c.columnModePartialWithCondition)
+        assertTrue(c.compression) // 3.3.11 >= 3.3.2
         assertFalse(c.mergeCommit) // 3.3.11 < 3.4.0
     }
 
@@ -43,17 +44,23 @@ class StarrocksVersionGateTest {
         assertTrue(v33early.pkDedup)
         assertTrue(v33early.columnModePartialUpdate)
         assertFalse(v33early.columnModePartialWithCondition) // needs >= 3.3.11
+
+        // request-body compression turns on at 3.3.2
+        assertFalse(StarrocksVersionGate.capabilities("3.3.1").compression)
+        assertTrue(StarrocksVersionGate.capabilities("3.3.2").compression)
+        assertTrue(StarrocksVersionGate.capabilities("4.1.1").compression)
     }
 
     @Test
-    fun `validate rejects versions below the PK floor`() {
-        assertThrows<IllegalStateException> { StarrocksVersionGate.validate("3.0.5") }
+    fun `validate rejects versions below the 3_3 floor`() {
+        assertThrows<IllegalStateException> { StarrocksVersionGate.validate("3.2.9") }
+        assertThrows<IllegalStateException> { StarrocksVersionGate.validate("3.1.0") }
         assertThrows<IllegalStateException> { StarrocksVersionGate.validate("2.5.0") }
     }
 
     @Test
-    fun `validate accepts baseline and newer`() {
-        StarrocksVersionGate.validate("3.1.0")
+    fun `validate accepts the 3_3 floor and newer`() {
+        StarrocksVersionGate.validate("3.3.0")
         StarrocksVersionGate.validate("3.3.11")
         StarrocksVersionGate.validate("4.1.1")
     }

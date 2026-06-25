@@ -83,6 +83,23 @@ class StarrocksAirbyteClient(
         withConnection { conn -> conn.createStatement().use { it.execute(sql) } }
     }
 
+    /**
+     * StarRocks server version (`SELECT current_version()`), read once and cached. Used at write
+     * start to opt into version-gated Stream Load capabilities (see [StarrocksVersionGate]); `check`
+     * reads it separately for fail-fast validation.
+     */
+    private val cachedVersion: String by lazy {
+        withConnection { conn ->
+            conn.createStatement().use { stmt ->
+                stmt.executeQuery("SELECT current_version()").use { rs ->
+                    if (rs.next()) rs.getString(1).orEmpty() else ""
+                }
+            }
+        }
+    }
+
+    fun serverVersion(): String = cachedVersion
+
     override suspend fun createNamespace(namespace: String) {
         execute(sqlGenerator.createDatabase(namespace))
     }

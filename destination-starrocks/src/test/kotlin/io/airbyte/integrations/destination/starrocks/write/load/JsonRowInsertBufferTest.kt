@@ -15,6 +15,11 @@ import io.airbyte.cdk.load.table.CDC_DELETED_AT_COLUMN
 import io.airbyte.integrations.destination.starrocks.http.StreamLoadClient
 import java.math.BigDecimal
 import java.math.BigInteger
+import java.util.zip.GZIPInputStream
+import kotlinx.coroutines.runBlocking
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -83,5 +88,54 @@ class JsonRowInsertBufferTest {
             ),
             buf(cdc = true).streamLoadHeaders(),
         )
+    }
+
+    @Test
+    fun `gzip round-trips and shrinks repetitive input`() {
+        val data = "x".repeat(2000).toByteArray()
+        val gz = buf(cdc = false).gzip(data)
+        assertEquals(0x1f, gz[0].toInt() and 0xff) // gzip magic bytes
+        assertEquals(0x8b, gz[1].toInt() and 0xff)
+        assertTrue(gz.size < data.size)
+        assertArrayEquals(data, GZIPInputStream(gz.inputStream()).readBytes())
+    }
+
+    @Test
+    fun `compress=true sends a gzipped body with the compression header`() {
+        val be = MockWebServer().apply { start() }
+        be.enqueue(MockResponse().setResponseCode(200).setBody("""{"Status":"Success","NumberLoadedRows":1}"""))
+        val fe = MockWebServer().apply { start() }
+        fe.enqueue(
+            MockResponse().setResponseCode(307)
+                .setHeader("Location", be.url("/api/db/orders/_stream_load").toString()),
+        )
+        val client =
+            StreamLoadClient(host = fe.hostName, httpPort = fe.port, username = "root", password = "pw", expectContinue = false)
+        val b =
+            JsonRowInsertBuffer(table, columns, cdcDeleteEnabled = false, streamLoadClient = client, compress = true)
+        b.accumulate(
+            mapOf<String, AirbyteValue>(
+                "_airbyte_raw_id" to StringValue("rid"),
+                "id" to IntegerValue(BigInteger.ONE),
+                "name" to StringValue("hello"),
+                "amount" to NumberValue(BigDecimal.ONE),
+                CDC_DELETED_AT_COLUMN to NullValue,
+            ),
+        )
+        runBlocking { b.flush() }
+
+        fe.takeRequest()
+        val beReq = be.takeRequest()
+        assertEquals("gzip", beReq.getHeader("compression"))
+        val sent = beReq.body.readByteArray()
+        assertEquals(0x1f, sent[0].toInt() and 0xff) // body is actually gzip-compressed
+        assertEquals(0x8b, sent[1].toInt() and 0xff)
+        // ...and gunzips back to the JSON the buffer built (numbers as strings)
+        val json = mapper.readTree(GZIPInputStream(sent.inputStream()).readBytes())
+        assertEquals("rid", json[0]["_airbyte_raw_id"].asText())
+        assertEquals("1", json[0]["id"].asText())
+
+        fe.shutdown()
+        be.shutdown()
     }
 }
