@@ -38,6 +38,8 @@ dependencies {
     testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.10.2")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     testImplementation("com.squareup.okhttp3:okhttp-tls:4.12.0")
+    // For the LoadFormatSpec oneOf round-trip test (deserialize the discriminated union).
+    testImplementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.18.3")
 }
 
 application {

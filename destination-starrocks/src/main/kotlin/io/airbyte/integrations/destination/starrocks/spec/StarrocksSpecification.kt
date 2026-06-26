@@ -6,6 +6,9 @@ package io.airbyte.integrations.destination.starrocks.spec
 
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.fasterxml.jackson.annotation.JsonPropertyDescription
+import com.fasterxml.jackson.annotation.JsonSubTypes
+import com.fasterxml.jackson.annotation.JsonTypeInfo
+import com.kjetland.jackson.jsonSchema.annotations.JsonSchemaDescription
 import com.kjetland.jackson.jsonSchema.annotations.JsonSchemaInject
 import com.kjetland.jackson.jsonSchema.annotations.JsonSchemaTitle
 import io.airbyte.cdk.command.AIRBYTE_CLOUD_ENV
@@ -91,15 +94,13 @@ class StarrocksSpecification : ConfigurationSpecification() {
 
     @get:JsonSchemaTitle("Load Format")
     @get:JsonPropertyDescription(
-        "Stream Load body format. CSV is compact and high-throughput (default). JSON avoids CSV " +
-            "escaping edge cases (e.g. a literal \\N string being stored as NULL) and preserves large " +
-            "integer/decimal precision, at some throughput cost.",
+        "Stream Load body format. CSV is compact and high-throughput; JSON avoids CSV escaping edge " +
+            "cases (e.g. a literal \\N string being stored as NULL), preserves large integer/decimal " +
+            "precision, and supports request-body compression (CSV does not).",
     )
     @get:JsonProperty("load_format")
-    @get:JsonSchemaInject(
-        json = """{"order": 9, "default": "CSV", "enum": ["CSV", "JSON"], "group": "connection"}""",
-    )
-    val loadFormat: String = LoadFormat.CSV
+    @get:JsonSchemaInject(json = """{"order": 9, "group": "connection"}""")
+    val loadFormat: LoadFormatSpec = CsvFormat()
 
     @get:JsonSchemaTitle("SSL Mode")
     @get:JsonPropertyDescription(
@@ -113,20 +114,6 @@ class StarrocksSpecification : ConfigurationSpecification() {
             """{"order": 10, "default": "required", "enum": ["required", "verify_ca", "verify_identity"], "group": "connection"}""",
     )
     val sslMode: String = SslMode.REQUIRED
-
-    @get:JsonSchemaTitle("Load Compression")
-    @get:JsonPropertyDescription(
-        "Compress the Stream Load request body to cut network traffic on large batches. Only the " +
-            "JSON load format is compressed (StarRocks does not decompress CSV bodies) and only on " +
-            "clusters >= 3.3.2; with compression enabled, an older cluster or the CSV load format " +
-            "fails the connection check with a clear message. 'zstd' compresses better than 'gzip' " +
-            "at similar or lower CPU cost.",
-    )
-    @get:JsonProperty("load_compression")
-    @get:JsonSchemaInject(
-        json = """{"order": 11, "default": "none", "enum": ["none", "gzip", "zstd"], "group": "connection"}""",
-    )
-    val loadCompression: String = LoadCompression.NONE
 }
 
 object CdcDeletionMode {
@@ -137,11 +124,61 @@ object CdcDeletionMode {
     fun isSoftDelete(mode: String): Boolean = mode.equals(SOFT_DELETE, ignoreCase = true)
 }
 
-object LoadFormat {
-    const val CSV = "CSV"
-    const val JSON = "JSON"
+/**
+ * Stream Load body format as a discriminated union, so the UI only offers compression under JSON
+ * (StarRocks decompresses JSON request bodies only — there is no valid CSV+compression combination).
+ */
+@JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "format_type")
+@JsonSubTypes(
+    JsonSubTypes.Type(value = CsvFormat::class, name = CsvFormat.TYPE),
+    JsonSubTypes.Type(value = JsonFormat::class, name = JsonFormat.TYPE),
+)
+sealed interface LoadFormatSpec {
+    @get:JsonProperty("format_type") val formatType: String
+}
 
-    fun isJson(format: String): Boolean = format.equals(JSON, ignoreCase = true)
+/** True when the format ships a JSON Stream Load body. */
+val LoadFormatSpec.isJson: Boolean
+    get() = this is JsonFormat
+
+/** Compression algorithm for the format ("none" for CSV, which StarRocks cannot decompress). */
+val LoadFormatSpec.compression: String
+    get() = (this as? JsonFormat)?.compression ?: LoadCompression.NONE
+
+@JsonSchemaTitle("CSV")
+@JsonSchemaDescription(
+    "Compact, high-throughput CSV body. Note: a literal `\\N` string is stored as NULL and very " +
+        "large BIGINT/DECIMAL values can lose precision — use JSON if that matters.",
+)
+class CsvFormat : LoadFormatSpec {
+    companion object {
+        const val TYPE = "CSV"
+    }
+
+    override val formatType: String = TYPE
+}
+
+@JsonSchemaTitle("JSON")
+@JsonSchemaDescription(
+    "JSON body. Avoids CSV escaping edge cases, preserves large integer/decimal precision, and can " +
+        "be compressed (CSV cannot — StarRocks only decompresses JSON request bodies).",
+)
+data class JsonFormat(
+    @get:JsonSchemaTitle("Compression")
+    @get:JsonPropertyDescription(
+        "Compress the Stream Load request body to cut network traffic on large batches. Requires a " +
+            "cluster >= 3.3.2 (else the connection check fails). 'zstd' compresses better than 'gzip' " +
+            "at similar or lower CPU cost.",
+    )
+    @get:JsonProperty("compression")
+    @get:JsonSchemaInject(json = """{"order": 1, "default": "none", "enum": ["none", "gzip", "zstd"]}""")
+    val compression: String = LoadCompression.NONE,
+) : LoadFormatSpec {
+    companion object {
+        const val TYPE = "JSON"
+    }
+
+    override val formatType: String = TYPE
 }
 
 object LoadCompression {
