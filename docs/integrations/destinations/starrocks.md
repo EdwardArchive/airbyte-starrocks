@@ -299,6 +299,24 @@ This applies to:
 | DATE            | 0000-01-01 .. 9999-12-31                        |
 | DATETIME        | 0000-01-01 00:00:00 .. 9999-12-31 23:59:59      |
 
+## Schema evolution
+
+When a source column is added, dropped, or retyped, the connector evolves the destination table to
+match. Adding a column and dropping a non-key column are applied in place (`ADD COLUMN` — always
+nullable, since StarRocks cannot add a `NOT NULL` column to a populated table — and `DROP COLUMN`).
+
+**Type changes** are applied by **rebuilding the table**. StarRocks cannot `ALTER ... MODIFY COLUMN`
+between many types in place (for example `integer` ⇄ `number`, i.e. `BIGINT` ⇄ `DECIMAL`), so the
+connector creates a new table with the updated schema, copies the data through per-column `CAST`s, and
+atomically swaps it in. Widenings such as `integer` → `number` are applied **losslessly** — the
+existing rows are converted, not truncated. This is a one-time full-table copy per type change (it
+mirrors how the BigQuery and Snowflake destinations handle the same limitation), and the original
+table is untouched until the final swap, so a failed rebuild leaves the data intact.
+
+One case still fails the sync: **dropping a primary-key column** (the source removed/renamed its
+primary key), since StarRocks cannot drop a key column — recreate the table with a **Refresh**.
+(Removing a primary-key field is a breaking change, so Airbyte pauses the connection for review first.)
+
 ## StarRocks version compatibility
 
 The connector detects the cluster version with `SELECT current_version()` (at connection check and
@@ -319,6 +337,7 @@ PK-load parallelism at 4.1) rather than unlocking new connector features. See
 
 | Version | Date       | Pull Request                                            | Subject                                                          |
 | ------- | ---------- | ------------------------------------------------------- | ---------------------------------------------------------------- |
+| 2.0.26  | 2026-06-26 | [#91](https://github.com/EdwardArchive/airbyte-starrocks/pull/91) | Rebuild the table to apply type changes StarRocks can't ALTER in place, losslessly (#70) |
 | 2.0.25  | 2026-06-26 | [#90](https://github.com/EdwardArchive/airbyte-starrocks/pull/90) | Optional `replication_num` for single-BE / shared-nothing clusters (#58) |
 | 2.0.23  | 2026-06-26 | [#75](https://github.com/EdwardArchive/airbyte-starrocks/pull/75) | SSH tunnel + SQL load method for tunneled/SSL clusters           |
 |         |            | [#67](https://github.com/EdwardArchive/airbyte-starrocks/pull/67) | Add StarRocks destination setup guide                            |

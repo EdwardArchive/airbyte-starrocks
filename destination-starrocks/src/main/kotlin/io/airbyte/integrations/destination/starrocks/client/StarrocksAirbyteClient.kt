@@ -9,7 +9,6 @@ import io.airbyte.cdk.load.command.DestinationStream
 import io.airbyte.cdk.load.command.ImportType
 import io.airbyte.cdk.load.component.ColumnChangeset
 import io.airbyte.cdk.load.component.ColumnType
-import io.airbyte.cdk.load.component.ColumnTypeChange
 import io.airbyte.cdk.load.component.TableOperationsClient
 import io.airbyte.cdk.load.component.TableSchema
 import io.airbyte.cdk.load.component.TableSchemaEvolutionClient
@@ -30,6 +29,7 @@ import io.airbyte.integrations.destination.starrocks.sql.StarrocksSqlGenerator
 import io.github.oshai.kotlinlogging.KotlinLogging
 import java.sql.Connection
 import java.sql.DriverManager
+import java.util.UUID
 
 private val log = KotlinLogging.logger {}
 
@@ -63,23 +63,49 @@ internal fun canonicalStarrocksType(dataType: String): String =
     }
 
 /**
- * Builds the `ALTER TABLE ... MODIFY COLUMN` for a single changed column, or `null` if the change
- * must be skipped.
- *
- * StarRocks cannot tighten a populated column to `NOT NULL` (existing rows already hold NULLs, and
- * schema-evolution-added columns are stored NULLABLE on purpose — see [StarrocksAirbyteClient.applyChangeset]).
- * Discovering such a column reads it back as nullable while the desired schema still wants NOT NULL,
- * so a naive MODIFY is rejected by StarRocks and re-issued on every subsequent sync (#77). A
- * nullability-only tighten is therefore skipped; a genuine type change is still applied, but the
- * column is kept NULLABLE for the same reason the ADD path forces NULL.
+ * Adjusts the desired columns for a schema-evolution rebuild so the copy can't fail on the #77
+ * nullability rule. StarRocks cannot store NULL in a `NOT NULL` column, and schema-evolution-added
+ * columns are kept NULLABLE; so a NON-key column that is currently nullable but whose desired type is
+ * `NOT NULL` is kept NULLABLE in the rebuilt table (existing rows may hold NULLs). Key columns are
+ * always `NOT NULL` (enforced by `createTable`) and are left untouched.
  */
-internal fun modifyColumnSql(qualifiedTable: String, name: String, change: ColumnTypeChange): String? {
-    val current = change.originalType
-    val desired = change.newType
-    val tightensToNotNull = current.nullable && !desired.nullable
-    if (tightensToNotNull && desired.type == current.type) return null
-    val nullClause = if (desired.nullable || tightensToNotNull) " NULL" else " NOT NULL"
-    return "ALTER TABLE $qualifiedTable MODIFY COLUMN ${quoteIdent(name)} ${desired.type}$nullClause"
+internal fun rebuildColumns(
+    columns: List<StarrocksColumn>,
+    keyColumns: Set<String>,
+    columnChangeset: ColumnChangeset,
+): List<StarrocksColumn> =
+    columns.map { col ->
+        val change = columnChangeset.columnsToChange[col.name]
+        if (change != null && change.originalType.nullable && !col.nullable && col.name !in keyColumns) {
+            col.copy(nullable = true)
+        } else {
+            col
+        }
+    }
+
+/**
+ * Builds the `INSERT INTO <temp> SELECT ... FROM <real>` that re-populates a rebuilt table (#70). Each
+ * desired column is sourced from the existing table by name: a type-changed column is `CAST` to its new
+ * type (lossless for widenings like `BIGINT`->`DECIMAL`), a freshly added column has no source value so
+ * it is `NULL`, and everything else — including the meta columns, which never appear in the changeset —
+ * is copied verbatim. Dropped columns are simply absent from [columns].
+ */
+internal fun rebuildInsertSql(
+    qualifiedTemp: String,
+    qualifiedReal: String,
+    columns: List<StarrocksColumn>,
+    columnChangeset: ColumnChangeset,
+): String {
+    val colList = columns.joinToString(", ") { quoteIdent(it.name) }
+    val selectList =
+        columns.joinToString(", ") { col ->
+            when (col.name) {
+                in columnChangeset.columnsToAdd -> "NULL"
+                in columnChangeset.columnsToChange -> "CAST(${quoteIdent(col.name)} AS ${col.sqlType})"
+                else -> quoteIdent(col.name)
+            }
+        }
+    return "INSERT INTO $qualifiedTemp ($colList) SELECT $selectList FROM $qualifiedReal"
 }
 
 /**
@@ -287,10 +313,17 @@ class StarrocksAirbyteClient(
     ) {
         if (columnChangeset.isNoop()) return
 
-        // StarRocks PRIMARY KEY columns are immutable — never ALTER them (belt-and-suspenders on top
-        // of canonicalStarrocksType, which prevents the spurious diffs that flagged them).
-        val keyColumns = describeTable(stream.tableSchema).second.toSet()
+        // A type/nullability change often can't be applied in place — StarRocks rejects many ALTER
+        // MODIFYs (e.g. BIGINT->DECIMAL for integer->number). Rather than skip-and-silently-truncate,
+        // REBUILD: create a temp with the desired schema, INSERT...SELECT CAST the data, then atomically
+        // SWAP. This applies adds/drops/changes together and is lossless for widenings — mirroring how
+        // BigQuery/Snowflake handle a destination that can't ALTER a column type in place (#70).
+        if (columnChangeset.columnsToChange.isNotEmpty()) {
+            rebuildTable(stream, tableName, columnChangeset)
+            return
+        }
 
+        // No type changes: cheap in-place ADD/DROP (metadata-only on shared-data fast schema evolution).
         val qualifiedTable = "${quoteIdent(tableName.namespace)}.${quoteIdent(tableName.name)}"
         columnChangeset.columnsToAdd.forEach { (name, type) ->
             // New columns are always added NULLABLE: StarRocks rejects `ADD COLUMN ... NOT NULL`
@@ -301,21 +334,57 @@ class StarrocksAirbyteClient(
             }
             execute("ALTER TABLE $qualifiedTable ADD COLUMN ${quoteIdent(name)} ${type.type} NULL")
         }
-        columnChangeset.columnsToChange.forEach { (name, change) ->
-            if (name in keyColumns) {
-                log.warn { "Skipping ALTER on key column `$name` — StarRocks PRIMARY KEY columns are immutable" }
-                return@forEach
-            }
-            val sql = modifyColumnSql(qualifiedTable, name, change)
-            if (sql == null) {
-                log.warn { "Skipping MODIFY on `$name` — StarRocks cannot tighten a populated column to NOT NULL" }
-                return@forEach
-            }
-            execute(sql)
-        }
         columnChangeset.columnsToDrop.forEach { (name, _) ->
+            // #70 Gap A (deferred — intentionally not guarded): if `name` is a PRIMARY KEY column (the
+            // source dropped/renamed its PK), StarRocks rejects this ("Can not drop key column in
+            // primary data model table") and the sync fails. The real fix is a table recreation, which
+            // Airbyte gates behind a manual Refresh (a PK removal is a breaking change → the connection
+            // pauses for review). Revisit only to surface a clearer error than the raw 1064.
             execute("ALTER TABLE $qualifiedTable DROP COLUMN ${quoteIdent(name)}")
         }
+    }
+
+    /**
+     * Rebuilds [tableName] to the stream's desired schema when a type/nullability change can't be
+     * ALTERed in place (#70): create a temp table with the new schema, copy the data through per-column
+     * `CAST`s (lossless for widenings; added columns become NULL, dropped columns are omitted), then
+     * atomically `SWAP WITH` and drop the leftover. Mirrors the BigQuery/Snowflake rebuild approach; the
+     * real table is untouched until the SWAP, so a mid-rebuild failure leaves the data intact.
+     */
+    private suspend fun rebuildTable(
+        stream: DestinationStream,
+        tableName: TableName,
+        columnChangeset: ColumnChangeset,
+    ) {
+        val (columns, keyColumns, model) = describeTable(stream.tableSchema)
+        val rebuilt = rebuildColumns(columns, keyColumns.toSet(), columnChangeset)
+        val db = tableName.namespace
+        val tempTable = "${tableName.name}_ab_evo_${UUID.randomUUID().toString().replace("-", "")}"
+        log.info {
+            "Rebuilding ${quoteIdent(db)}.${quoteIdent(tableName.name)} (via $tempTable) to apply " +
+                "${columnChangeset.columnsToChange.size} type change(s) StarRocks can't ALTER in place (#70)"
+        }
+        execute(
+            sqlGenerator.createTable(
+                database = db,
+                table = tempTable,
+                columns = rebuilt,
+                keyColumns = keyColumns,
+                model = model,
+                ifNotExists = false,
+                replicationNum = config.replicationNum,
+            ),
+        )
+        execute(
+            rebuildInsertSql(
+                "${quoteIdent(db)}.${quoteIdent(tempTable)}",
+                "${quoteIdent(db)}.${quoteIdent(tableName.name)}",
+                rebuilt,
+                columnChangeset,
+            ),
+        )
+        execute(sqlGenerator.swapTable(db, tableName.name, tempTable))
+        execute(sqlGenerator.dropTable(db, tempTable))
     }
 
     /**
