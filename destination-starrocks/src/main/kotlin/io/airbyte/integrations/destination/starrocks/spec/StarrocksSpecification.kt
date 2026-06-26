@@ -120,9 +120,10 @@ class StarrocksSpecification : ConfigurationSpecification() {
     @get:JsonSchemaTitle("SSH Tunnel Method")
     @get:JsonPropertyDescription(
         "Whether to initiate an SSH tunnel (jump server / bastion) before connecting, and the auth " +
-            "to use. The tunnel carries BOTH the JDBC control plane and the Stream Load data plane " +
-            "(the FE->BE redirect is followed through a SOCKS forward), so for high-volume syncs the " +
-            "bastion is a throughput bottleneck — prefer direct connectivity (VPN/peering) at scale.",
+            "to use. The tunnel carries the JDBC control plane only — Stream Load's HTTP data plane " +
+            "(with its FE->BE 307 redirect) cannot traverse a single local forward. When a tunnel is " +
+            "configured you must also set the Load Method to 'SQL', which loads over this same JDBC " +
+            "connection.",
     )
     @get:JsonProperty("tunnel_method")
     @get:JsonSchemaInject(json = """{"order": 11, "group": "connection"}""")

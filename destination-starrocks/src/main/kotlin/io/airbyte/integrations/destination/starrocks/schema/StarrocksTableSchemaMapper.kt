@@ -118,7 +118,6 @@ object StarrocksSqlTypes {
 /**
  * StarRocks identifiers may contain most characters when back-quoted, so we keep the original name.
  * A normalization hook is kept here (mirroring ClickHouse's `toClickHouseCompatibleName`) for future
- * reserved-character handling. TODO(verify in e2e): confirm no further escaping is required for
- * unusual stream/column names.
+ * reserved-character handling.
  */
 internal fun String.toStarrocksCompatibleName(): String = this
