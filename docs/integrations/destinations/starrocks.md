@@ -94,7 +94,9 @@ WHERE ad.default_version_id = adv.id
 ```
 
 The statement matches by image repository, so you do not need the generated definition ID. Re-run it
-after any re-registration or image-tag change (it is idempotent).
+after any re-registration or image-tag change (it is idempotent). The change takes effect
+immediately — no Airbyte restart is needed, and a connection created before the flag was set starts
+working on its next sync (no need to recreate it).
 
 > This config-DB edit is an unofficial, version-coupled stopgap. The durable alternative is to serve
 > the connector from a self-hosted connector registry (`CONNECTOR_REGISTRY_BASE_URL`), where
