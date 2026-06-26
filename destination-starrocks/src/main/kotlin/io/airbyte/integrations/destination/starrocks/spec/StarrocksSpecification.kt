@@ -14,6 +14,8 @@ import com.kjetland.jackson.jsonSchema.annotations.JsonSchemaTitle
 import io.airbyte.cdk.command.AIRBYTE_CLOUD_ENV
 import io.airbyte.cdk.command.ConfigurationSpecification
 import io.airbyte.cdk.load.spec.DestinationSpecificationExtension
+import io.airbyte.cdk.ssh.SshNoTunnelMethod
+import io.airbyte.cdk.ssh.SshTunnelMethodConfiguration
 import io.airbyte.protocol.models.v0.DestinationSyncMode
 import io.micronaut.context.annotation.Requires
 import jakarta.inject.Singleton
@@ -114,6 +116,39 @@ class StarrocksSpecification : ConfigurationSpecification() {
             """{"order": 10, "default": "required", "enum": ["required", "verify_ca", "verify_identity"], "group": "connection"}""",
     )
     val sslMode: String = SslMode.REQUIRED
+
+    @get:JsonSchemaTitle("SSH Tunnel Method")
+    @get:JsonPropertyDescription(
+        "Whether to initiate an SSH tunnel (jump server / bastion) before connecting, and the auth " +
+            "to use. The tunnel carries BOTH the JDBC control plane and the Stream Load data plane " +
+            "(the FE->BE redirect is followed through a SOCKS forward), so for high-volume syncs the " +
+            "bastion is a throughput bottleneck — prefer direct connectivity (VPN/peering) at scale.",
+    )
+    @get:JsonProperty("tunnel_method")
+    @get:JsonSchemaInject(json = """{"order": 11, "group": "connection"}""")
+    val tunnelMethod: SshTunnelMethodConfiguration = SshNoTunnelMethod
+
+    @get:JsonSchemaTitle("Load Method")
+    @get:JsonPropertyDescription(
+        "How records are loaded. 'Stream Load' (default) is StarRocks' high-throughput HTTP bulk " +
+            "load. 'SQL' loads over the JDBC connection with batched INSERT/DELETE — lower throughput, " +
+            "but it works over an SSH tunnel and end-to-end SSL (the Stream Load HTTP data plane does " +
+            "neither). Use 'SQL' when an SSH tunnel is configured. (The 'Load Format' option above " +
+            "applies to Stream Load only.)",
+    )
+    @get:JsonProperty("load_method")
+    @get:JsonSchemaInject(
+        json = """{"order": 12, "default": "Stream Load", "enum": ["Stream Load", "SQL"], "group": "connection"}""",
+    )
+    val loadMethod: String = LoadMethod.STREAM_LOAD
+}
+
+object LoadMethod {
+    const val STREAM_LOAD = "Stream Load"
+    const val SQL = "SQL"
+
+    /** Whether to load over JDBC (batched INSERT/DELETE) instead of HTTP Stream Load. */
+    fun isSql(method: String): Boolean = method.equals(SQL, ignoreCase = true)
 }
 
 object CdcDeletionMode {

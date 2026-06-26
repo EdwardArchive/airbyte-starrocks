@@ -34,6 +34,11 @@ dependencies {
     // Bundles the native libs for the connector's runtime platforms.
     implementation("com.github.luben:zstd-jni:1.5.7-11")
 
+    // SSH tunnel (#68): the CDK's createTunnelSession does the JDBC local forward + key parsing; we
+    // only reference sshd-core's SshdSocketAddress directly (already transitive via the CDK — pinned
+    // to expose it at compile time and match the CDK's version).
+    implementation("org.apache.sshd:sshd-core:2.13.2")
+
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.10.2")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
