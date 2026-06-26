@@ -67,17 +67,41 @@ docker push {your-registry}/destination-starrocks:2.0.23
 
 ### Step 3: Register the custom destination in Airbyte
 
-In the Airbyte UI, go to **Settings -> Destinations -> + New connector** (custom connector) and
+In the Airbyte UI, go to **Settings -> Destinations -> + New connector** (Docker connector) and
 provide:
 
+- **Connector display name:** e.g. `StarRocks`
 - **Docker repository:** `{your-registry}/destination-starrocks`
 - **Docker image tag:** `2.0.23`
-- **Connector definition ID:** `5c4d966a-19ff-45d8-9687-876ad0f5d0d9`
 
-> Note: a raw custom-image registration does not read `metadata.yaml`. Because this is a Bulk-Load
-> CDK destination, the platform must have `supports_refreshes` enabled for the actor definition,
-> otherwise the CDK fails before the first write with a missing `generationId`. Set this flag in the
-> platform `actor_definition_version` for the custom destination.
+Airbyte generates the connector's definition ID on registration — there is no ID field to fill in,
+and the generated ID does **not** match the `definitionId` in `metadata.yaml` (a raw custom-image
+registration does not read that file).
+
+#### Enable refresh support (required)
+
+This is a Bulk-Load CDK destination, so the platform must mark the connector as supporting refreshes;
+otherwise the CDK aborts before the first write with a missing `generationId`. A custom Docker
+registration leaves this flag **off**, and neither the UI nor the API exposes a way to set it, so you
+must enable it once directly in Airbyte's config database (default DB name `db-airbyte`):
+
+```sql
+UPDATE actor_definition_version adv
+SET supports_refreshes = true
+FROM actor_definition ad
+WHERE ad.default_version_id = adv.id
+  AND adv.docker_repository LIKE '%/destination-starrocks';
+```
+
+The statement matches by image repository, so you do not need the generated definition ID. Re-run it
+after any re-registration or image-tag change (it is idempotent).
+
+> This config-DB edit is an unofficial, version-coupled stopgap. The durable alternative is to serve
+> the connector from a self-hosted connector registry (`CONNECTOR_REGISTRY_BASE_URL`), where
+> `supportsRefreshes: true` from `metadata.yaml` is honored automatically — but that replaces the
+> instance-wide registry (mirror the full official registry and append this connector). **Airbyte
+> Cloud** does not support custom-image connectors at all; supporting Cloud requires contributing the
+> connector to Airbyte's registry.
 
 ### Step 4: Configure the connection
 
