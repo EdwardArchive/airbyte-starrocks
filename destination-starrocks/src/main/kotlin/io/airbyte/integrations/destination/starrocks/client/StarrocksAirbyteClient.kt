@@ -9,6 +9,7 @@ import io.airbyte.cdk.load.command.DestinationStream
 import io.airbyte.cdk.load.command.ImportType
 import io.airbyte.cdk.load.component.ColumnChangeset
 import io.airbyte.cdk.load.component.ColumnType
+import io.airbyte.cdk.load.component.ColumnTypeChange
 import io.airbyte.cdk.load.component.TableOperationsClient
 import io.airbyte.cdk.load.component.TableSchema
 import io.airbyte.cdk.load.component.TableSchemaEvolutionClient
@@ -60,6 +61,26 @@ internal fun canonicalStarrocksType(dataType: String): String =
         "json" -> StarrocksSqlTypes.JSON
         else -> dataType.uppercase()
     }
+
+/**
+ * Builds the `ALTER TABLE ... MODIFY COLUMN` for a single changed column, or `null` if the change
+ * must be skipped.
+ *
+ * StarRocks cannot tighten a populated column to `NOT NULL` (existing rows already hold NULLs, and
+ * schema-evolution-added columns are stored NULLABLE on purpose — see [StarrocksAirbyteClient.applyChangeset]).
+ * Discovering such a column reads it back as nullable while the desired schema still wants NOT NULL,
+ * so a naive MODIFY is rejected by StarRocks and re-issued on every subsequent sync (#77). A
+ * nullability-only tighten is therefore skipped; a genuine type change is still applied, but the
+ * column is kept NULLABLE for the same reason the ADD path forces NULL.
+ */
+internal fun modifyColumnSql(qualifiedTable: String, name: String, change: ColumnTypeChange): String? {
+    val current = change.originalType
+    val desired = change.newType
+    val tightensToNotNull = current.nullable && !desired.nullable
+    if (tightensToNotNull && desired.type == current.type) return null
+    val nullClause = if (desired.nullable || tightensToNotNull) " NULL" else " NOT NULL"
+    return "ALTER TABLE $qualifiedTable MODIFY COLUMN ${quoteIdent(name)} ${desired.type}$nullClause"
+}
 
 /**
  * StarRocks implementation of the CDK [TableOperationsClient] / [TableSchemaEvolutionClient]. All DDL
@@ -284,11 +305,12 @@ class StarrocksAirbyteClient(
                 log.warn { "Skipping ALTER on key column `$name` — StarRocks PRIMARY KEY columns are immutable" }
                 return@forEach
             }
-            val type = change.newType
-            execute(
-                "ALTER TABLE $qualifiedTable " +
-                    "MODIFY COLUMN ${quoteIdent(name)} ${type.type}${if (type.nullable) " NULL" else " NOT NULL"}",
-            )
+            val sql = modifyColumnSql(qualifiedTable, name, change)
+            if (sql == null) {
+                log.warn { "Skipping MODIFY on `$name` — StarRocks cannot tighten a populated column to NOT NULL" }
+                return@forEach
+            }
+            execute(sql)
         }
         columnChangeset.columnsToDrop.forEach { (name, _) ->
             execute("ALTER TABLE $qualifiedTable DROP COLUMN ${quoteIdent(name)}")

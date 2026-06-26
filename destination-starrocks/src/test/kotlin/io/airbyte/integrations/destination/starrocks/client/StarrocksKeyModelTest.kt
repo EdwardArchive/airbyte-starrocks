@@ -7,9 +7,12 @@ package io.airbyte.integrations.destination.starrocks.client
 import io.airbyte.cdk.load.command.Append
 import io.airbyte.cdk.load.command.Dedupe
 import io.airbyte.cdk.load.command.Overwrite
+import io.airbyte.cdk.load.component.ColumnType
+import io.airbyte.cdk.load.component.ColumnTypeChange
 import io.airbyte.integrations.destination.starrocks.schema.StarrocksSqlTypes
 import io.airbyte.integrations.destination.starrocks.sql.KeyModel
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 
 /**
@@ -46,5 +49,59 @@ class StarrocksKeyModelTest {
         assertEquals(StarrocksSqlTypes.DATE, canonicalStarrocksType("date"))
         assertEquals(StarrocksSqlTypes.BOOLEAN, canonicalStarrocksType("boolean"))
         assertEquals(StarrocksSqlTypes.JSON, canonicalStarrocksType("json"))
+    }
+
+    // --- modifyColumnSql: schema-evolution nullability (#77) ---
+
+    @Test
+    fun `modifyColumnSql skips a nullability-only tighten to NOT NULL`() {
+        // Evolution added the column NULLABLE (StarRocks can't ADD NOT NULL to a populated table), so a
+        // later sync sees discovered-nullable vs desired-NOT-NULL. Re-issuing MODIFY ... NOT NULL would
+        // be rejected every sync — it must be skipped instead.
+        val change =
+            ColumnTypeChange(
+                ColumnType(StarrocksSqlTypes.BIGINT, true),
+                ColumnType(StarrocksSqlTypes.BIGINT, false),
+            )
+        assertNull(modifyColumnSql("`db`.`t`", "age", change))
+    }
+
+    @Test
+    fun `modifyColumnSql applies a type change but keeps the column nullable when it cannot be tightened`() {
+        val change =
+            ColumnTypeChange(
+                ColumnType(StarrocksSqlTypes.STRING, true),
+                ColumnType(StarrocksSqlTypes.BIGINT, false),
+            )
+        assertEquals(
+            "ALTER TABLE `db`.`t` MODIFY COLUMN `age` BIGINT NULL",
+            modifyColumnSql("`db`.`t`", "age", change),
+        )
+    }
+
+    @Test
+    fun `modifyColumnSql relaxes a NOT NULL column to NULL`() {
+        val change =
+            ColumnTypeChange(
+                ColumnType(StarrocksSqlTypes.STRING, false),
+                ColumnType(StarrocksSqlTypes.STRING, true),
+            )
+        assertEquals(
+            "ALTER TABLE `db`.`t` MODIFY COLUMN `name` STRING NULL",
+            modifyColumnSql("`db`.`t`", "name", change),
+        )
+    }
+
+    @Test
+    fun `modifyColumnSql preserves NOT NULL on a type change for an already NOT NULL column`() {
+        val change =
+            ColumnTypeChange(
+                ColumnType(StarrocksSqlTypes.STRING, false),
+                ColumnType(StarrocksSqlTypes.BIGINT, false),
+            )
+        assertEquals(
+            "ALTER TABLE `db`.`t` MODIFY COLUMN `code` BIGINT NOT NULL",
+            modifyColumnSql("`db`.`t`", "code", change),
+        )
     }
 }
