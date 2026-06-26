@@ -51,6 +51,7 @@ class StarrocksSqlGenerator {
         keyColumns: List<String>,
         model: KeyModel,
         ifNotExists: Boolean = true,
+        replicationNum: Int? = null,
     ): String {
         require(keyColumns.isNotEmpty()) { "keyColumns must not be empty" }
         val byName = columns.associateBy { it.name }
@@ -76,6 +77,11 @@ class StarrocksSqlGenerator {
             append(")\n")
             append("$keyClause ($keyList)\n")
             append("DISTRIBUTED BY HASH ($keyList)")
+            // Optional replication_num for single-BE / shared-nothing clusters (issue #58). Unset =>
+            // no PROPERTIES => FE default (correct for shared-data and multi-BE).
+            if (replicationNum != null) {
+                append("\nPROPERTIES (\"replication_num\" = \"$replicationNum\")")
+            }
         }
     }
 }

@@ -87,6 +87,18 @@ class StarrocksChecker(
         }
     }
 
+    /**
+     * DDL for the throwaway check table. Mirrors the real createTable's `replication_num` (issue #58)
+     * so a passing check implies a *creatable* real table: a single-BE shared-nothing cluster (which
+     * needs `replication_num=1`) fails here instead of passing and then breaking the first sync. Unset
+     * => no PROPERTIES => FE default, matching [io.airbyte.integrations.destination.starrocks.sql.StarrocksSqlGenerator.createTable].
+     */
+    private fun checkTableDdl(qualified: String): String {
+        val props = config.replicationNum?.let { " PROPERTIES(\"replication_num\"=\"$it\")" } ?: ""
+        return "CREATE TABLE IF NOT EXISTS $qualified (${quoteIdent("id")} INT NOT NULL) " +
+            "DUPLICATE KEY(${quoteIdent("id")}) DISTRIBUTED BY HASH(${quoteIdent("id")}) BUCKETS 1$props"
+    }
+
     /** Round-trips one row through a JDBC INSERT into a throwaway table, then drops it (SQL load). */
     private fun validateSqlLoad(conn: Connection) {
         val database = config.resolvedDatabase
@@ -94,11 +106,7 @@ class StarrocksChecker(
         val qualified = "${quoteIdent(database)}.${quoteIdent(table)}"
         conn.createStatement().use { stmt ->
             stmt.execute("CREATE DATABASE IF NOT EXISTS ${quoteIdent(database)}")
-            stmt.execute(
-                "CREATE TABLE IF NOT EXISTS $qualified (${quoteIdent("id")} INT NOT NULL) " +
-                    "DUPLICATE KEY(${quoteIdent("id")}) DISTRIBUTED BY HASH(${quoteIdent("id")}) " +
-                    "BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")",
-            )
+            stmt.execute(checkTableDdl(qualified))
         }
         try {
             conn.prepareStatement("INSERT INTO $qualified (${quoteIdent("id")}) VALUES (?)").use { ps ->
@@ -118,11 +126,7 @@ class StarrocksChecker(
 
         conn.createStatement().use { stmt ->
             stmt.execute("CREATE DATABASE IF NOT EXISTS ${quoteIdent(database)}")
-            stmt.execute(
-                "CREATE TABLE IF NOT EXISTS $qualified (${quoteIdent("id")} INT NOT NULL) " +
-                    "DUPLICATE KEY(${quoteIdent("id")}) DISTRIBUTED BY HASH(${quoteIdent("id")}) " +
-                    "BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")",
-            )
+            stmt.execute(checkTableDdl(qualified))
         }
         try {
             val response =
