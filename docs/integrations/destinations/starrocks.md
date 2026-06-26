@@ -301,22 +301,21 @@ This applies to:
 
 ## Schema evolution
 
-When a source column is added, dropped, or retyped, the connector evolves the destination table in
-place: it `ADD`s new columns (always nullable — StarRocks cannot add a `NOT NULL` column to a
-populated table), `DROP`s removed non-key columns, and `MODIFY`s columns whose type changed.
+When a source column is added, dropped, or retyped, the connector evolves the destination table to
+match. Adding a column and dropping a non-key column are applied in place (`ADD COLUMN` — always
+nullable, since StarRocks cannot add a `NOT NULL` column to a populated table — and `DROP COLUMN`).
 
-Some changes StarRocks cannot apply in place are **skipped** (logged as a warning); the column keeps
-its previous type. To apply them, trigger a **Refresh**, which recreates the table with the new
-schema. These are:
-
-- **Primary-key column type changes** — StarRocks primary-key columns are immutable.
-- **Unsupported type conversions** (for example `integer` ⇄ `number`, i.e. `BIGINT` ⇄ `DECIMAL`).
-  StarRocks rejects these, so the connector skips them rather than failing the sync.
-- **Tightening a populated column to `NOT NULL`** (existing rows may hold NULLs).
+**Type changes** are applied by **rebuilding the table**. StarRocks cannot `ALTER ... MODIFY COLUMN`
+between many types in place (for example `integer` ⇄ `number`, i.e. `BIGINT` ⇄ `DECIMAL`), so the
+connector creates a new table with the updated schema, copies the data through per-column `CAST`s, and
+atomically swaps it in. Widenings such as `integer` → `number` are applied **losslessly** — the
+existing rows are converted, not truncated. This is a one-time full-table copy per type change (it
+mirrors how the BigQuery and Snowflake destinations handle the same limitation), and the original
+table is untouched until the final swap, so a failed rebuild leaves the data intact.
 
 One case still fails the sync: **dropping a primary-key column** (the source removed/renamed its
-primary key), since StarRocks cannot drop a key column — recreate the table with a Refresh. (Removing
-a primary-key field is a breaking change, so Airbyte pauses the connection for review first.)
+primary key), since StarRocks cannot drop a key column — recreate the table with a **Refresh**.
+(Removing a primary-key field is a breaking change, so Airbyte pauses the connection for review first.)
 
 ## StarRocks version compatibility
 
@@ -338,7 +337,7 @@ PK-load parallelism at 4.1) rather than unlocking new connector features. See
 
 | Version | Date       | Pull Request                                            | Subject                                                          |
 | ------- | ---------- | ------------------------------------------------------- | ---------------------------------------------------------------- |
-| 2.0.26  | 2026-06-26 | [#91](https://github.com/EdwardArchive/airbyte-starrocks/pull/91) | Skip type changes StarRocks can't apply in place, instead of failing the sync (#70) |
+| 2.0.26  | 2026-06-26 | [#91](https://github.com/EdwardArchive/airbyte-starrocks/pull/91) | Rebuild the table to apply type changes StarRocks can't ALTER in place, losslessly (#70) |
 | 2.0.25  | 2026-06-26 | [#90](https://github.com/EdwardArchive/airbyte-starrocks/pull/90) | Optional `replication_num` for single-BE / shared-nothing clusters (#58) |
 | 2.0.23  | 2026-06-26 | [#75](https://github.com/EdwardArchive/airbyte-starrocks/pull/75) | SSH tunnel + SQL load method for tunneled/SSL clusters           |
 |         |            | [#67](https://github.com/EdwardArchive/airbyte-starrocks/pull/67) | Add StarRocks destination setup guide                            |
