@@ -85,8 +85,7 @@ class SqlRowInsertBuffer(
             log.info { "No rows to flush for ${tableName.name}; skipping SQL load" }
             return
         }
-        val deletes = if (cdcDeleteEnabled && !softDelete) rows.filter { isDelete(it) } else emptyList()
-        val upserts = if (deletes.isEmpty()) rows else rows.filterNot { isDelete(it) }
+        val (upserts, deletes) = resolveOperations()
 
         DriverManager.getConnection(jdbcUrl, username, password).use { conn ->
             conn.autoCommit = false
@@ -99,6 +98,32 @@ class SqlRowInsertBuffer(
                 if (deletes.isNotEmpty()) ", ${deletes.size} deletes" else ""
         }
         rows.clear()
+    }
+
+    /**
+     * Resolve the buffered records into (rows to upsert, rows to delete).
+     *
+     * For a CDC hard-delete stream the records are collapsed to the **last event per primary key in
+     * arrival order**, so a `delete(K)` followed by an `insert(K)` in the same flush ends as an
+     * upsert (and an `insert(K)` followed by `delete(K)` ends as a delete). Without this, splitting
+     * the batch into "all upserts then all deletes" would run the INSERT before the DELETE and drop
+     * a row that should exist — diverging from the order-preserving Stream Load path. Collapsing by
+     * key also makes the upsert/delete sets disjoint, so executing inserts before deletes is safe.
+     *
+     * Non-CDC-delete streams keep every row: StarRocks PRIMARY KEY tables upsert on load (last write
+     * wins) and DUPLICATE KEY / append tables want every row, so no collapsing is applied.
+     */
+    internal fun resolveOperations(): Pair<List<Map<String, AirbyteValue>>, List<Map<String, AirbyteValue>>> {
+        if (!cdcDeleteEnabled || softDelete || rows.none { isDelete(it) }) return rows.toList() to emptyList()
+        // Degenerate: CDC delete with no key to dedup/target — fall back to a plain partition.
+        if (primaryKeyColumns.isEmpty()) return rows.filterNot { isDelete(it) } to rows.filter { isDelete(it) }
+
+        val lastByKey = LinkedHashMap<List<String?>, Map<String, AirbyteValue>>()
+        for (record in rows) {
+            lastByKey[primaryKeyColumns.map { sqlString(record[it] ?: NullValue) }] = record
+        }
+        val resolved = lastByKey.values.toList()
+        return resolved.filterNot { isDelete(it) } to resolved.filter { isDelete(it) }
     }
 
     private fun batchInsert(conn: Connection, batch: List<Map<String, AirbyteValue>>) {

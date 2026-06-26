@@ -4,12 +4,14 @@
 
 package io.airbyte.integrations.destination.starrocks.write.load
 
+import io.airbyte.cdk.load.data.AirbyteValue
 import io.airbyte.cdk.load.data.BooleanValue
 import io.airbyte.cdk.load.data.IntegerValue
 import io.airbyte.cdk.load.data.NullValue
 import io.airbyte.cdk.load.data.NumberValue
 import io.airbyte.cdk.load.data.StringValue
 import io.airbyte.cdk.load.schema.model.TableName
+import io.airbyte.cdk.load.table.CDC_DELETED_AT_COLUMN
 import java.math.BigDecimal
 import java.math.BigInteger
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -53,5 +55,56 @@ class SqlRowInsertBufferTest {
         assertEquals("0", b.sqlString(BooleanValue(false)))
         // a literal `\N` string is a plain string here (no CSV null-marker collision)
         assertEquals("\\N", b.sqlString(StringValue("\\N")))
+    }
+
+    // --- resolveOperations: intra-batch CDC ordering (#76) ---
+
+    private fun upsert(id: Long, name: String): Map<String, AirbyteValue> =
+        mapOf("id" to IntegerValue(BigInteger.valueOf(id)), "name" to StringValue(name))
+
+    /** A CDC hard-delete record: deleted-at present and non-null (the value content is irrelevant). */
+    private fun delete(id: Long): Map<String, AirbyteValue> =
+        mapOf("id" to IntegerValue(BigInteger.valueOf(id)), CDC_DELETED_AT_COLUMN to StringValue("2026-06-26T00:00:00Z"))
+
+    @Test
+    fun `resolveOperations collapses delete-then-reinsert of the same key to an upsert`() {
+        val b = buf(cdc = true, pk = listOf("id"))
+        b.accumulate(delete(5))
+        b.accumulate(upsert(5, "revived"))
+        val (upserts, deletes) = b.resolveOperations()
+        assertEquals(0, deletes.size, "the trailing insert must win, so nothing is deleted")
+        assertEquals(1, upserts.size)
+        assertEquals("revived", (upserts[0]["name"] as StringValue).value)
+    }
+
+    @Test
+    fun `resolveOperations collapses insert-then-delete of the same key to a delete`() {
+        val b = buf(cdc = true, pk = listOf("id"))
+        b.accumulate(upsert(5, "doomed"))
+        b.accumulate(delete(5))
+        val (upserts, deletes) = b.resolveOperations()
+        assertEquals(0, upserts.size, "the trailing delete must win")
+        assertEquals(1, deletes.size)
+    }
+
+    @Test
+    fun `resolveOperations routes independent keys to upsert and delete buckets`() {
+        val b = buf(cdc = true, pk = listOf("id"))
+        b.accumulate(upsert(1, "a"))
+        b.accumulate(delete(2))
+        b.accumulate(upsert(3, "c"))
+        val (upserts, deletes) = b.resolveOperations()
+        assertEquals(2, upserts.size)
+        assertEquals(1, deletes.size)
+    }
+
+    @Test
+    fun `resolveOperations keeps every row for a non-cdc append stream`() {
+        val b = buf(cdc = false)
+        b.accumulate(upsert(1, "a"))
+        b.accumulate(upsert(1, "b")) // same key — must NOT be collapsed on an append stream
+        val (upserts, deletes) = b.resolveOperations()
+        assertEquals(2, upserts.size)
+        assertEquals(0, deletes.size)
     }
 }
