@@ -18,6 +18,7 @@ import io.airbyte.cdk.load.table.CDC_DELETED_AT_COLUMN
 import io.airbyte.cdk.load.table.directload.DirectLoadTableExecutionConfig
 import io.airbyte.cdk.load.write.StreamStateStore
 import io.airbyte.integrations.destination.starrocks.http.StreamLoadClient
+import io.airbyte.integrations.destination.starrocks.spec.LoadCompression
 import io.airbyte.integrations.destination.starrocks.spec.StarrocksConfiguration
 import io.airbyte.integrations.destination.starrocks.version.StarrocksVersionGate
 import io.airbyte.integrations.destination.starrocks.write.load.CsvRowInsertBuffer
@@ -66,17 +67,22 @@ class StarrocksAggregateFactory(
         val columns = finalColumns(stream)
         val buffer: RowInsertBuffer =
             if (config.loadAsJson) {
-                // gzip only when requested AND the detected version supports request-body compression
-                // (>= 3.3.2). `check` already fails fast on gzip+CSV or gzip+old-cluster; this is the
-                // write-time guard that actually flips it on.
-                val compress = config.compressGzip && capabilities.compression
+                // Compress only when requested AND the detected version supports request-body
+                // compression (>= 3.3.2). `check` already fails fast on compression+CSV or +old
+                // cluster; this is the write-time guard that actually flips it on.
+                val compression =
+                    if (LoadCompression.isEnabled(config.compression) && capabilities.compression) {
+                        config.compression
+                    } else {
+                        null
+                    }
                 JsonRowInsertBuffer(
                     tableName,
                     columns,
                     cdcDelete,
                     streamLoadClient,
                     config.cdcSoftDelete,
-                    compress = compress,
+                    compression = compression,
                 )
             } else {
                 CsvRowInsertBuffer(tableName, columns, cdcDelete, streamLoadClient, config.cdcSoftDelete)

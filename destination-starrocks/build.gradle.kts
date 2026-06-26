@@ -30,6 +30,10 @@ dependencies {
     // OkHttp for the Stream Load client (also transitive via toolkit-load-http; pinned to match).
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
+    // zstd codec for Stream Load request-body compression (gzip is JVM-built-in; zstd is not).
+    // Bundles the native libs for the connector's runtime platforms.
+    implementation("com.github.luben:zstd-jni:1.5.7-11")
+
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.10.2")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")

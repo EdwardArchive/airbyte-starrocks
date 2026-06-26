@@ -26,8 +26,9 @@ data class StarrocksConfiguration(
     val cdcSoftDelete: Boolean,
     val loadAsJson: Boolean,
     val sslMode: String,
-    /** gzip-compress the Stream Load body. Only effective with JSON load format on cluster >= 3.3.2. */
-    val compressGzip: Boolean = false,
+    /** Stream Load body compression: "none"/"gzip"/"zstd". Effective only with the JSON load format
+     * on a cluster >= 3.3.2 (validated at check). */
+    val compression: String = LoadCompression.NONE,
 ) : DestinationConfiguration() {
     val resolvedDatabase: String = database.ifEmpty { Defaults.DATABASE_NAME }
 
@@ -65,6 +66,6 @@ class StarrocksConfigurationFactory :
             cdcSoftDelete = CdcDeletionMode.isSoftDelete(pojo.cdcDeletionMode),
             loadAsJson = LoadFormat.isJson(pojo.loadFormat),
             sslMode = pojo.sslMode,
-            compressGzip = LoadCompression.isGzip(pojo.loadCompression),
+            compression = pojo.loadCompression,
         )
 }

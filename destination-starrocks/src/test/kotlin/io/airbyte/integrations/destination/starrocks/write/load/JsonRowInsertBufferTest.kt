@@ -5,6 +5,7 @@
 package io.airbyte.integrations.destination.starrocks.write.load
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.github.luben.zstd.ZstdInputStream
 import io.airbyte.cdk.load.data.AirbyteValue
 import io.airbyte.cdk.load.data.IntegerValue
 import io.airbyte.cdk.load.data.NullValue
@@ -23,6 +24,8 @@ import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 
 class JsonRowInsertBufferTest {
 
@@ -90,18 +93,18 @@ class JsonRowInsertBufferTest {
         )
     }
 
-    @Test
-    fun `gzip round-trips and shrinks repetitive input`() {
+    @ParameterizedTest
+    @ValueSource(strings = ["gzip", "zstd"])
+    fun `compress round-trips and shrinks repetitive input`(algo: String) {
         val data = "x".repeat(2000).toByteArray()
-        val gz = buf(cdc = false).gzip(data)
-        assertEquals(0x1f, gz[0].toInt() and 0xff) // gzip magic bytes
-        assertEquals(0x8b, gz[1].toInt() and 0xff)
-        assertTrue(gz.size < data.size)
-        assertArrayEquals(data, GZIPInputStream(gz.inputStream()).readBytes())
+        val c = buf(cdc = false).compress(algo, data)
+        assertTrue(c.size < data.size)
+        assertArrayEquals(data, decompress(algo, c))
     }
 
-    @Test
-    fun `compress=true sends a gzipped body with the compression header`() {
+    @ParameterizedTest
+    @ValueSource(strings = ["gzip", "zstd"])
+    fun `compression sends a compressed body with the compression header`(algo: String) {
         val be = MockWebServer().apply { start() }
         be.enqueue(MockResponse().setResponseCode(200).setBody("""{"Status":"Success","NumberLoadedRows":1}"""))
         val fe = MockWebServer().apply { start() }
@@ -112,7 +115,7 @@ class JsonRowInsertBufferTest {
         val client =
             StreamLoadClient(host = fe.hostName, httpPort = fe.port, username = "root", password = "pw", expectContinue = false)
         val b =
-            JsonRowInsertBuffer(table, columns, cdcDeleteEnabled = false, streamLoadClient = client, compress = true)
+            JsonRowInsertBuffer(table, columns, cdcDeleteEnabled = false, streamLoadClient = client, compression = algo)
         b.accumulate(
             mapOf<String, AirbyteValue>(
                 "_airbyte_raw_id" to StringValue("rid"),
@@ -126,16 +129,21 @@ class JsonRowInsertBufferTest {
 
         fe.takeRequest()
         val beReq = be.takeRequest()
-        assertEquals("gzip", beReq.getHeader("compression"))
+        assertEquals(algo, beReq.getHeader("compression"))
         val sent = beReq.body.readByteArray()
-        assertEquals(0x1f, sent[0].toInt() and 0xff) // body is actually gzip-compressed
-        assertEquals(0x8b, sent[1].toInt() and 0xff)
-        // ...and gunzips back to the JSON the buffer built (numbers as strings)
-        val json = mapper.readTree(GZIPInputStream(sent.inputStream()).readBytes())
+        // the body really is compressed and decompresses back to the JSON the buffer built
+        val json = mapper.readTree(decompress(algo, sent))
         assertEquals("rid", json[0]["_airbyte_raw_id"].asText())
         assertEquals("1", json[0]["id"].asText())
 
         fe.shutdown()
         be.shutdown()
     }
+
+    private fun decompress(algo: String, data: ByteArray): ByteArray =
+        when (algo) {
+            "gzip" -> GZIPInputStream(data.inputStream()).readBytes()
+            "zstd" -> ZstdInputStream(data.inputStream()).readBytes()
+            else -> error(algo)
+        }
 }

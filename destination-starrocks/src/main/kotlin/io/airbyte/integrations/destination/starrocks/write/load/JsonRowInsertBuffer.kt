@@ -24,9 +24,12 @@ import io.airbyte.cdk.load.schema.model.TableName
 import io.airbyte.cdk.load.table.CDC_DELETED_AT_COLUMN
 import io.airbyte.cdk.load.util.serializeToString
 import io.airbyte.integrations.destination.starrocks.http.StreamLoadClient
+import com.github.luben.zstd.ZstdOutputStream
+import io.airbyte.integrations.destination.starrocks.spec.LoadCompression
 import io.airbyte.integrations.destination.starrocks.write.load.CsvRowInsertBuffer.Companion.OP_COLUMN
 import io.github.oshai.kotlinlogging.KotlinLogging
 import java.io.ByteArrayOutputStream
+import java.io.OutputStream
 import java.security.MessageDigest
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
@@ -53,10 +56,11 @@ class JsonRowInsertBuffer(
     private val streamLoadClient: StreamLoadClient,
     private val softDelete: Boolean = false,
     /**
-     * gzip the request body and send `compression: gzip`. Only set when the cluster supports
-     * request-body compression (>= 3.3.2); StarRocks honors it for JSON Stream Load only.
+     * Request-body compression algorithm ("gzip" / "zstd"), or null for none. Sends the compressed
+     * body with a `compression: <algo>` header. Only set when the cluster supports request-body
+     * compression (>= 3.3.2); StarRocks honors it for JSON Stream Load only.
      */
-    private val compress: Boolean = false,
+    private val compression: String? = null,
 ) : RowInsertBuffer {
     private val mapper = ObjectMapper()
     private val rows: ArrayNode = mapper.createArrayNode()
@@ -96,12 +100,13 @@ class JsonRowInsertBuffer(
         // Label is content-addressed on the UNCOMPRESSED body so a batch's identity (hence idempotent
         // retry — #40) is independent of whether/how it was compressed.
         val label = streamLoadLabel(rawBody)
-        val body = if (compress) gzip(rawBody) else rawBody
+        val body = if (compression != null) compress(compression, rawBody) else rawBody
         val headers =
-            if (compress) streamLoadHeaders() + ("compression" to "gzip") else streamLoadHeaders()
+            if (compression != null) streamLoadHeaders() + ("compression" to compression)
+            else streamLoadHeaders()
 
         log.info {
-            val how = if (compress) "JSON, gzip ${rawBody.size}->${body.size}B" else "JSON"
+            val how = if (compression != null) "JSON, $compression ${rawBody.size}->${body.size}B" else "JSON"
             "Stream Load ($how) of ${rows.size()} rows into ${tableName.namespace}.${tableName.name}"
         }
         val response =
@@ -152,11 +157,17 @@ class JsonRowInsertBuffer(
     private fun sha256Hex(bytes: ByteArray): String =
         MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 
-    /** gzip a byte array. Java's GZIPOutputStream writes a fixed header (mtime=0), so it is
-     * deterministic for identical input. */
-    internal fun gzip(data: ByteArray): ByteArray {
+    /** Compress with the requested algorithm. gzip is deterministic for identical input
+     * (GZIPOutputStream writes mtime=0); zstd is provided by zstd-jni. */
+    internal fun compress(algo: String, data: ByteArray): ByteArray {
         val baos = ByteArrayOutputStream(data.size / 2)
-        GZIPOutputStream(baos).use { it.write(data) }
+        val out: OutputStream =
+            when (algo) {
+                LoadCompression.GZIP -> GZIPOutputStream(baos)
+                LoadCompression.ZSTD -> ZstdOutputStream(baos)
+                else -> throw IllegalArgumentException("Unsupported compression algorithm: $algo")
+            }
+        out.use { it.write(data) }
         return baos.toByteArray()
     }
 
