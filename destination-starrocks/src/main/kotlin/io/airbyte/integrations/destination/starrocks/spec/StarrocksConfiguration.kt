@@ -64,8 +64,8 @@ class StarrocksConfigurationFactory :
             ssl = pojo.ssl,
             enableJson = pojo.enableJson,
             cdcSoftDelete = CdcDeletionMode.isSoftDelete(pojo.cdcDeletionMode),
-            loadAsJson = LoadFormat.isJson(pojo.loadFormat),
+            loadAsJson = pojo.loadFormat.isJson,
             sslMode = pojo.sslMode,
-            compression = pojo.loadCompression,
+            compression = pojo.loadFormat.compression,
         )
 }

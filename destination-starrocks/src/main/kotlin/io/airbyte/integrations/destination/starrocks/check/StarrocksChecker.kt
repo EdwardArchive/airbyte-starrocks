@@ -46,17 +46,12 @@ class StarrocksChecker(
             require(!version.isNullOrBlank()) { "StarRocks check failed: empty version string" }
             StarrocksVersionGate.validate(version)
 
-            // Fail fast on an unsupported compression combo rather than silently sending a body
-            // StarRocks won't decompress at write time (it decompresses JSON bodies only, >= 3.3.2).
+            // Fail fast if compression is requested on too old a cluster. (CSV+compression is no longer
+            // representable — compression is a field of the JSON load-format branch only.)
             if (LoadCompression.isEnabled(config.compression)) {
-                require(config.loadAsJson) {
-                    "StarRocks check failed: load_compression=${config.compression} requires the JSON " +
-                        "load format — StarRocks does not decompress CSV Stream Load bodies. Set " +
-                        "load_format=JSON or load_compression=none."
-                }
                 require(StarrocksVersionGate.capabilities(version).compression) {
-                    "StarRocks check failed: load_compression=${config.compression} requires StarRocks " +
-                        ">= ${StarrocksVersionGate.MIN_COMPRESSION}; detected $version. Set load_compression=none."
+                    "StarRocks check failed: JSON compression '${config.compression}' requires StarRocks " +
+                        ">= ${StarrocksVersionGate.MIN_COMPRESSION}; detected $version. Use an uncompressed JSON format."
                 }
             }
 
