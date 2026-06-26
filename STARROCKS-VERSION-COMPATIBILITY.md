@@ -10,13 +10,14 @@
 
 ## 0. Summary
 
-- The connector's foundation (**PRIMARY KEY tables + `__op` upsert/delete + `merge_condition`**) is
-  **fully available on shared-data 3.3.11+**. Treat that as the **baseline**.
-- Higher versions improve **throughput / operational convenience rather than adding features**
-  (3.4 Merge Commit → 3.5 automatic mode detection → 4.1 parallel PK load).
-- Instead of trusting flags blindly, the connector **detects the version**
-  (`SELECT current_version()`), **fails fast / warns** on unsupported combinations, and aligns its
-  behavior using this document.
+- This connector's **version gating is deliberately minimal.** At `check`/startup it does exactly two
+  things: (a) **reject clusters below the shared-data 3.3 floor**, and (b) **enable JSON request-body
+  compression** when the cluster is `>= 3.3.2`. That is the entire runtime effect of version detection.
+- The foundation it relies on (**PRIMARY KEY tables + `__op` upsert/delete**, CSV `enclose`, JSON
+  Stream Load) is guaranteed by the 3.3 floor and used unconditionally — it is not separately gated.
+- The matrix below is a **StarRocks capability reference, not a list of connector behaviors.** See
+  **§2.1** for exactly which rows the connector acts on, and why the rest do not apply to Airbyte's
+  load model (full-row upsert/delete via Stream Load).
 
 ## 1. Version detection
 
@@ -28,9 +29,9 @@ SELECT current_version();   -- e.g. "3.3.11", "3.5.4", or "4.1.1"
 
 It reads the version at `check` / startup and compares it against the matrix below.
 
-- If an unsupported combination is enabled, **abort with a clear error**
-  (e.g. `merge_condition requires shared-data >= 3.1; column-mode partial + condition requires >= 3.3.11; detected 3.3.5`).
-- If a feature is below the shared-data bar, **disable it and log a warning**.
+- The **only** runtime gates today: reject `< 3.3.0` (hard error at `check`), and require `>= 3.3.2`
+  when JSON request-body compression is requested (else `check` fails fast). Nothing else in the
+  matrix is enforced or auto-disabled by the connector.
 
 > Why: version mismatches surface at runtime as cryptic Stream Load 4xx errors that are hard to
 > debug. Validating once over 9030 before loading is well worth the cost.
@@ -39,7 +40,7 @@ It reads the version at `check` / startup and compares it against the matrix bel
 
 Legend: ✅ available · ⚠️ conditional / caution · ❌ unsupported (needs a higher version)
 
-| Feature (connector use) | shared-data since | **3.3.11** | **3.5.x** | **4.1.1** |
+| Feature (StarRocks capability; see §2.1 for what the connector uses) | shared-data since | **3.3.11** | **3.5.x** | **4.1.1** |
 |---|---|:---:|:---:|:---:|
 | PRIMARY KEY tables (#3) | v3.1.0 | ✅ | ✅ | ✅ |
 | `__op` upsert/delete (#4) | v3.1.0 (with PK) | ✅ | ✅ | ✅ |
@@ -64,7 +65,30 @@ Legend: ✅ available · ⚠️ conditional / caution · ❌ unsupported (needs 
 - **4.1.1 (latest):** + **parallel PK load** for the highest throughput ceiling, and the most robust
   column-mode + conditional. Bleeding edge.
 
+## 2.1 What this connector actually uses
+
+Airbyte's load model is **full-row upsert/delete via Stream Load `__op` into PRIMARY KEY tables** — it
+always sends complete records, never partial columns. That single fact makes most of the matrix above
+irrelevant here. Concretely:
+
+| Feature (from the matrix) | Status in this connector | Why |
+|---|---|---|
+| 3.3 floor check | ✅ used (gated) | `StarrocksVersionGate.validate()` rejects `< 3.3.0` at `check` |
+| PRIMARY KEY tables + `__op` upsert/delete | ✅ used (ungated) | floor-guaranteed; the core of dedup/CDC |
+| CSV `enclose` / JSON Stream Load | ✅ used (ungated) | floor-guaranteed (`enclose` since 3.0) |
+| **request-body compression** (gzip/zstd, ≥3.3.2) | ✅ **used (gated)** | the *only* version-detected capability — JSON body only (`capabilities.compression`) |
+| partial update — row mode | ❌ N/A | Airbyte sends full rows; there is nothing partial to update |
+| partial update — column mode / conditional / auto-mode | ❌ N/A | same reason — partial update never applies |
+| **Merge Commit** (`enable_merge_commit`, 3.4) | ❌ evaluated, not used | **ignores user-specified labels** ([docs](https://docs.starrocks.io/docs/sql-reference/sql-statements/loading_unloading/STREAM_LOAD/): *"They will be ignored if specified"*) → would break the content-addressed idempotent-retry guard; and *"not recommended if the concurrency is one"* — this connector loads a stream's batches **sequentially** (concurrency 1 per table), so there is nothing to merge |
+| `merge_condition` order-safety | ⚠️ not implemented (future candidate) | relies instead on within-batch load order + cross-batch **commit order**. A monotonic ordering column (e.g. CDC `_ab_cdc_log_file`/`_pos`) would make cross-batch upserts order-safe; **Stream-Load-only** (the SQL load path can't use it). Only matters under parallel/reordered commits |
+| persistent index `CLOUD_NATIVE` (3.3.8 default) | ▽ automatic | cluster default on ≥3.3.8; no connector action |
+| parallel PK load (4.1) | ▽ automatic | cluster-side; no connector action |
+
 ## 3. Caveats that need "logic", not just a flag (all versions)
+
+> **Status:** of the three below, only **#3 (`__op` reserved name)** is implemented (the connector
+> rejects a source column named `__op`). #1/#2 concern `merge_condition`, which the connector does
+> **not** use today (see §2.1) — they apply only if order-safe conditional upserts are added later.
 
 Constraints to honor regardless of version — adding a spec field is not enough.
 
