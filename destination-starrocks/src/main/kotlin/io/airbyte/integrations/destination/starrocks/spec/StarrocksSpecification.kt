@@ -69,7 +69,7 @@ class StarrocksSpecification : ConfigurationSpecification() {
     @get:JsonSchemaTitle("SSL")
     @get:JsonPropertyDescription("Use SSL for the MySQL-protocol connection.")
     @get:JsonProperty("ssl")
-    @get:JsonSchemaInject(json = """{"order": 6, "default": false, "group": "connection"}""")
+    @get:JsonSchemaInject(json = """{"order": 6, "default": false, "group": "security"}""")
     val ssl: Boolean = false
 
     @get:JsonSchemaTitle("Enable JSON")
@@ -78,7 +78,7 @@ class StarrocksSpecification : ConfigurationSpecification() {
             "Useful for sources with rich JSON columns (e.g. Postgres jsonb).",
     )
     @get:JsonProperty("enable_json")
-    @get:JsonSchemaInject(json = """{"order": 7, "default": false, "group": "connection"}""")
+    @get:JsonSchemaInject(json = """{"order": 11, "default": false, "group": "loading"}""")
     val enableJson: Boolean = false
 
     @get:JsonSchemaTitle("CDC Deletion Mode")
@@ -90,7 +90,7 @@ class StarrocksSpecification : ConfigurationSpecification() {
     @get:JsonProperty("cdc_deletion_mode")
     @get:JsonSchemaInject(
         json =
-            """{"order": 8, "default": "Hard delete", "enum": ["Hard delete", "Soft delete"], "group": "connection"}""",
+            """{"order": 12, "default": "Hard delete", "enum": ["Hard delete", "Soft delete"], "group": "loading"}""",
     )
     val cdcDeletionMode: String = CdcDeletionMode.HARD_DELETE
 
@@ -101,7 +101,7 @@ class StarrocksSpecification : ConfigurationSpecification() {
             "precision, and supports request-body compression (CSV does not).",
     )
     @get:JsonProperty("load_format")
-    @get:JsonSchemaInject(json = """{"order": 9, "group": "connection"}""")
+    @get:JsonSchemaInject(json = """{"order": 10, "group": "loading"}""")
     val loadFormat: LoadFormatSpec = CsvFormat()
 
     @get:JsonSchemaTitle("SSL Mode")
@@ -113,7 +113,7 @@ class StarrocksSpecification : ConfigurationSpecification() {
     @get:JsonProperty("ssl_mode")
     @get:JsonSchemaInject(
         json =
-            """{"order": 10, "default": "required", "enum": ["required", "verify_ca", "verify_identity"], "group": "connection"}""",
+            """{"order": 7, "default": "required", "enum": ["required", "verify_ca", "verify_identity"], "group": "security"}""",
     )
     val sslMode: String = SslMode.REQUIRED
 
@@ -126,7 +126,7 @@ class StarrocksSpecification : ConfigurationSpecification() {
             "connection.",
     )
     @get:JsonProperty("tunnel_method")
-    @get:JsonSchemaInject(json = """{"order": 11, "group": "connection"}""")
+    @get:JsonSchemaInject(json = """{"order": 8, "group": "security"}""")
     val tunnelMethod: SshTunnelMethodConfiguration = SshNoTunnelMethod
 
     @get:JsonSchemaTitle("Load Method")
@@ -139,7 +139,7 @@ class StarrocksSpecification : ConfigurationSpecification() {
     )
     @get:JsonProperty("load_method")
     @get:JsonSchemaInject(
-        json = """{"order": 12, "default": "Stream Load", "enum": ["Stream Load", "SQL"], "group": "connection"}""",
+        json = """{"order": 9, "default": "Stream Load", "enum": ["Stream Load", "SQL"], "group": "loading"}""",
     )
     val loadMethod: String = LoadMethod.STREAM_LOAD
 }
@@ -252,5 +252,7 @@ class StarrocksSpecificationExtension : DestinationSpecificationExtension {
     override val groups =
         listOf(
             DestinationSpecificationExtension.Group("connection", "Connection"),
+            DestinationSpecificationExtension.Group("security", "Security & Tunnel"),
+            DestinationSpecificationExtension.Group("loading", "Data Loading"),
         )
 }
