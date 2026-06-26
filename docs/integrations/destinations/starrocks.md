@@ -23,6 +23,7 @@ available on Airbyte Cloud.
 | Namespaces                     |     O     | Stream namespace maps to a StarRocks database              |
 | Replicate Incremental Deletes  |     O     | Via CDC soft delete (`_ab_cdc_deleted_at`)                 |
 | SSL/TLS connection             |     O     | Control plane (MySQL protocol) only; Stream Load stays HTTP |
+| SSH tunnel (bastion)           |     O     | Carries both planes; use the `SQL` load method when tunneling |
 | Airbyte Cloud                  |     X     | OSS custom-image connector only                            |
 
 ## Prerequisites
@@ -59,9 +60,9 @@ If you leave the **Database** field blank, the connector uses a database named `
 From the repository root, build the destination Docker image and push it to your registry:
 
 ```bash
-# tag should match metadata.yaml: airbyte/destination-starrocks:2.0.22
-docker build -t {your-registry}/destination-starrocks:2.0.22 destination-starrocks
-docker push {your-registry}/destination-starrocks:2.0.22
+# tag should match metadata.yaml: airbyte/destination-starrocks:2.0.23
+docker build -t {your-registry}/destination-starrocks:2.0.23 destination-starrocks
+docker push {your-registry}/destination-starrocks:2.0.23
 ```
 
 ### Step 3: Register the custom destination in Airbyte
@@ -70,7 +71,7 @@ In the Airbyte UI, go to **Settings -> Destinations -> + New connector** (custom
 provide:
 
 - **Docker repository:** `{your-registry}/destination-starrocks`
-- **Docker image tag:** `2.0.22`
+- **Docker image tag:** `2.0.23`
 - **Connector definition ID:** `5c4d966a-19ff-45d8-9687-876ad0f5d0d9`
 
 > Note: a raw custom-image registration does not read `metadata.yaml`. Because this is a Bulk-Load
@@ -113,6 +114,8 @@ StarRocks' FE HTTP port is not TLS.
 | `cdc_deletion_mode` |    No    | `Hard delete` | CDC delete handling for deduped streams: `Hard delete` or `Soft delete`.                                  |
 | `load_format`       |    No    | `CSV`         | Stream Load body format: `CSV` (no options) or `JSON` (with a nested `compression` option).               |
 | `compression`       |    No    | `none`        | Under the `JSON` load format only: `none`, `gzip`, or `zstd` for the Stream Load request body.            |
+| `tunnel_method`     |    No    | No tunnel     | Optional SSH tunnel (jump server / bastion) for both planes. See "SSH tunnel and load method" below.      |
+| `load_method`       |    No    | `Stream Load` | How records are loaded: `Stream Load` (HTTP bulk load) or `SQL` (batched INSERT/DELETE over JDBC).        |
 
 ## Supported sync modes
 
@@ -131,6 +134,31 @@ StarRocks' FE HTTP port is not TLS.
   applies against the primary key. PRIMARY KEY columns are forced `NOT NULL` and are immutable
   (never altered) after the table is created.
 
+### Choosing a sync mode
+
+| Goal                                            | Recommended mode                                        |
+| ----------------------------------------------- | ------------------------------------------------------- |
+| Mirror the source's current state exactly       | Full Refresh - Overwrite, or CDC + Dedup (hard delete)  |
+| Keep a large table cheaply up to date           | Incremental - Append + Dedup (with CDC)                 |
+| Keep a record that a row was deleted            | Append + Dedup with CDC **soft delete**                 |
+| Track every change, updates included            | Incremental - Append (with CDC)                         |
+| Simple append-only log / event tables           | Incremental - Append (a cursor is enough)               |
+| Fully refresh a small dimension table           | Full Refresh - Overwrite                                |
+
+### Cursor vs CDC incremental
+
+Incremental syncs come in two flavors, and the difference matters when picking a mode:
+
+- **Cursor (standard incremental)** pulls rows whose cursor column (e.g. `updated_at`) is greater
+  than the last sync. Simple and works on almost any source, but it **cannot detect deletes**
+  (deleted rows linger in the destination), misses changes when the cursor is not updated, and can
+  miss late-arriving rows with a smaller cursor value.
+- **CDC** reads the database change log (e.g. MySQL binlog) directly, capturing **inserts, updates,
+  and deletes in order**. It catches deletes but requires source-side setup (binlog enabled, etc.).
+
+In short: use **CDC** when deletes must be reflected; a **cursor** is enough for append- or
+update-only tables.
+
 ### Namespaces
 
 A stream's namespace maps to a StarRocks database. Streams without a namespace use the configured
@@ -143,6 +171,17 @@ For CDC sources synced with Append + Dedup, the **CDC Deletion Mode** controls h
 - **Hard delete** (default): the row is removed from the destination (`__op=1`).
 - **Soft delete**: the row is kept and marked via the `_ab_cdc_deleted_at` column (loaded as
   `__op=0`). Query live rows with `WHERE _ab_cdc_deleted_at IS NULL`.
+
+How each change type lands, by mode (CDC enabled):
+
+| Mode                        | INSERT        | UPDATE                       | DELETE                                       |
+| --------------------------- | ------------- | ---------------------------- | -------------------------------------------- |
+| CDC + Append                | new row       | new row (history kept)       | tombstone row added (history kept)           |
+| CDC + Dedup, hard delete    | upsert latest | overwrite with latest        | row removed                                  |
+| CDC + Dedup, soft delete    | upsert latest | overwrite with latest        | row kept, `_ab_cdc_deleted_at` set           |
+
+With **CDC + Append**, every insert/update/delete is retained as its own row, so the full change
+history of a key is preserved — useful for audit logs and change analysis.
 
 > Note: `__op` is a reserved column name in StarRocks 3.3.6+. If a source stream already has an
 > `__op` column it must be renamed upstream to avoid a collision.
@@ -165,6 +204,23 @@ The **Load Format** parameter is a choice between two Stream Load body formats:
 Stream Load batches use a content-addressed label (a hash of the batch body), so retrying the same
 batch is idempotent: StarRocks rejects the re-load as "Label Already Exists", which the connector
 treats as success to prevent duplicate rows.
+
+## SSH tunnel and load method
+
+When the Airbyte worker cannot reach the cluster directly, set **SSH Tunnel Method** to route the
+connection through a jump server (bastion). The tunnel carries **both** planes — the JDBC control
+plane and the Stream Load data plane (the FE→BE redirect is followed through a SOCKS forward). Because
+every byte of a sync flows through the bastion, it becomes a throughput bottleneck for high-volume
+loads; prefer direct connectivity (VPN / peering) at scale.
+
+The **Load Method** parameter chooses how records reach StarRocks:
+
+- **Stream Load** (default): StarRocks' high-throughput HTTP bulk load. The HTTP data plane does not
+  speak SSL and is awkward to tunnel on its own.
+- **SQL**: loads over the JDBC connection with batched `INSERT` / `DELETE`. Throughput is lower, but
+  it works over an **SSH tunnel** and **end-to-end SSL**, which the Stream Load HTTP data plane does
+  not. Use `SQL` when an SSH tunnel is configured. (The **Load Format** option above applies to
+  Stream Load only.)
 
 ## Output schema
 
@@ -236,6 +292,8 @@ PK-load parallelism at 4.1) rather than unlocking new connector features. See
 
 | Version | Date       | Pull Request                                            | Subject                                                          |
 | ------- | ---------- | ------------------------------------------------------- | ---------------------------------------------------------------- |
+| 2.0.23  | 2026-06-26 | [#75](https://github.com/EdwardArchive/airbyte-starrocks/pull/75) | SSH tunnel + SQL load method for tunneled/SSL clusters           |
+|         |            | [#67](https://github.com/EdwardArchive/airbyte-starrocks/pull/67) | Add StarRocks destination setup guide                            |
 | 2.0.22  | 2026-06-26 | [#66](https://github.com/EdwardArchive/airbyte-starrocks/pull/66) | Model `load_format` as a oneOf so CSV cannot select compression  |
 |         |            | [#65](https://github.com/EdwardArchive/airbyte-starrocks/pull/65) | Add zstd Stream Load compression alongside gzip                  |
 |         |            | [#64](https://github.com/EdwardArchive/airbyte-starrocks/pull/64) | Version-adaptive Stream Load (floor 3.3, gzip JSON compression)  |
