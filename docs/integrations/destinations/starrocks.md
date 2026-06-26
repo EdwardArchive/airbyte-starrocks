@@ -319,6 +319,7 @@ PK-load parallelism at 4.1) rather than unlocking new connector features. See
 
 | Version | Date       | Pull Request                                            | Subject                                                          |
 | ------- | ---------- | ------------------------------------------------------- | ---------------------------------------------------------------- |
+| 2.0.25  | 2026-06-26 | [#90](https://github.com/EdwardArchive/airbyte-starrocks/pull/90) | Optional `replication_num` for single-BE / shared-nothing clusters (#58) |
 | 2.0.23  | 2026-06-26 | [#75](https://github.com/EdwardArchive/airbyte-starrocks/pull/75) | SSH tunnel + SQL load method for tunneled/SSL clusters           |
 |         |            | [#67](https://github.com/EdwardArchive/airbyte-starrocks/pull/67) | Add StarRocks destination setup guide                            |
 | 2.0.22  | 2026-06-26 | [#66](https://github.com/EdwardArchive/airbyte-starrocks/pull/66) | Model `load_format` as a oneOf so CSV cannot select compression  |
