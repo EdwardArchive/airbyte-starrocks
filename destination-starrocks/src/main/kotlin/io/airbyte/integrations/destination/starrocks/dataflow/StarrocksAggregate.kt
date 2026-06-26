@@ -60,13 +60,8 @@ class StarrocksAggregateFactory(
         val stream = catalog.getStream(key)
         val cdcDelete = cdcDeleteEnabled(stream)
 
-        // The Stream Load CDC delete path appends an `__op` column; a source column already named
-        // `__op` (reserved in StarRocks >= 3.3.6) would collide and corrupt the load (#45). The SQL
-        // load path uses INSERT/DELETE (no `__op`), so the guard only applies when NOT loading via SQL.
         require(
-            !(cdcDelete &&
-                !config.loadAsSql &&
-                CsvRowInsertBuffer.OP_COLUMN in stream.tableSchema.columnSchema.finalSchema.keys),
+            !opColumnCollides(cdcDelete, config.loadAsSql, stream.tableSchema.columnSchema.finalSchema.keys),
         ) {
             "Stream '${key.name}' has a column named '${CsvRowInsertBuffer.OP_COLUMN}', which collides " +
                 "with the CDC operation column StarRocks uses for load-time delete/upsert. Rename it at the source."
@@ -134,5 +129,17 @@ class StarrocksAggregateFactory(
         /** PRIMARY KEY columns for a Dedupe stream (for the SQL CDC `DELETE` predicate); else empty. */
         fun primaryKeyColumns(stream: DestinationStream): List<String> =
             (stream.tableSchema.importType as? Dedupe)?.primaryKey?.map { it.single() } ?: emptyList()
+
+        /**
+         * True when the Stream Load CDC delete path would collide with a user column named `__op`. That
+         * path appends an `__op` column (reserved in StarRocks >= 3.3.6) for load-time delete/upsert; a
+         * source column of the same name corrupts the load (#45). The SQL load path uses INSERT/DELETE
+         * (no `__op`), so the collision only applies when NOT loading via SQL.
+         */
+        fun opColumnCollides(
+            cdcDelete: Boolean,
+            loadAsSql: Boolean,
+            finalColumnNames: Set<String>,
+        ): Boolean = cdcDelete && !loadAsSql && CsvRowInsertBuffer.OP_COLUMN in finalColumnNames
     }
 }

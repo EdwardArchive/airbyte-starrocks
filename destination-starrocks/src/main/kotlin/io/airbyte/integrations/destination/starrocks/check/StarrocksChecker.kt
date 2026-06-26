@@ -6,6 +6,7 @@ package io.airbyte.integrations.destination.starrocks.check
 
 import io.airbyte.cdk.load.check.DestinationChecker
 import io.airbyte.cdk.ssh.SshNoTunnelMethod
+import io.airbyte.cdk.ssh.SshTunnelMethodConfiguration
 import io.airbyte.integrations.destination.starrocks.http.StreamLoadClient
 import io.airbyte.integrations.destination.starrocks.spec.LoadCompression
 import io.airbyte.integrations.destination.starrocks.spec.StarrocksConfiguration
@@ -16,6 +17,16 @@ import jakarta.inject.Singleton
 import java.sql.Connection
 import java.sql.DriverManager
 import java.util.UUID
+
+/**
+ * Whether the configured load method is compatible with the tunnel setting. An SSH tunnel only
+ * forwards the JDBC connection; Stream Load's HTTP data plane (with its FE->BE 307 redirect) cannot
+ * traverse it, so a tunnel requires the SQL load method (#68).
+ */
+internal fun tunnelLoadMethodCompatible(
+    tunnelMethod: SshTunnelMethodConfiguration,
+    loadAsSql: Boolean,
+): Boolean = tunnelMethod is SshNoTunnelMethod || loadAsSql
 
 /**
  * `check` for StarRocks. Validates BOTH planes the connector uses, so that a passing check actually
@@ -56,9 +67,7 @@ class StarrocksChecker(
             require(!version.isNullOrBlank()) { "StarRocks check failed: empty version string" }
             StarrocksVersionGate.validate(version)
 
-            // An SSH tunnel only forwards the JDBC connection; Stream Load's HTTP data plane (with its
-            // FE->BE 307 redirect) cannot traverse it, so a tunnel requires the SQL load method (#68).
-            require(config.tunnelMethod is SshNoTunnelMethod || config.loadAsSql) {
+            require(tunnelLoadMethodCompatible(config.tunnelMethod, config.loadAsSql)) {
                 "StarRocks check failed: an SSH tunnel only forwards the JDBC connection, but the Stream " +
                     "Load data plane is HTTP and cannot be tunneled. Set the load method to 'SQL'."
             }
