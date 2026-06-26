@@ -11,8 +11,11 @@ import io.airbyte.cdk.load.component.ColumnType
 import io.airbyte.cdk.load.component.ColumnTypeChange
 import io.airbyte.integrations.destination.starrocks.schema.StarrocksSqlTypes
 import io.airbyte.integrations.destination.starrocks.sql.KeyModel
+import java.sql.SQLException
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
@@ -103,5 +106,30 @@ class StarrocksKeyModelTest {
             "ALTER TABLE `db`.`t` MODIFY COLUMN `code` BIGINT NOT NULL",
             modifyColumnSql("`db`.`t`", "code", change),
         )
+    }
+
+    // --- isUnsupportedTypeChange: #70 Gap B (skip a MODIFY StarRocks rejects instead of failing) ---
+
+    @Test
+    fun `isUnsupportedTypeChange matches the StarRocks 1064 cannot-change rejection`() {
+        assertTrue(
+            isUnsupportedTypeChange(SQLException("Can not change BIGINT to DECIMAL128(38,9)", "HY000", 1064)),
+        )
+    }
+
+    @Test
+    fun `isUnsupportedTypeChange does NOT swallow the key-column DROP rejection so Gap A stays a hard error`() {
+        // Same 1064 code, different message — must propagate so a PRIMARY KEY column drop still fails loudly.
+        assertFalse(
+            isUnsupportedTypeChange(
+                SQLException("Can not drop key column in primary data model table", "HY000", 1064),
+            ),
+        )
+    }
+
+    @Test
+    fun `isUnsupportedTypeChange ignores unrelated SQL errors and a null message`() {
+        assertFalse(isUnsupportedTypeChange(SQLException("Communications link failure", "08S01", 0)))
+        assertFalse(isUnsupportedTypeChange(SQLException(null as String?, "HY000", 1064)))
     }
 }

@@ -30,6 +30,7 @@ import io.airbyte.integrations.destination.starrocks.sql.StarrocksSqlGenerator
 import io.github.oshai.kotlinlogging.KotlinLogging
 import java.sql.Connection
 import java.sql.DriverManager
+import java.sql.SQLException
 
 private val log = KotlinLogging.logger {}
 
@@ -81,6 +82,17 @@ internal fun modifyColumnSql(qualifiedTable: String, name: String, change: Colum
     val nullClause = if (desired.nullable || tightensToNotNull) " NULL" else " NOT NULL"
     return "ALTER TABLE $qualifiedTable MODIFY COLUMN ${quoteIdent(name)} ${desired.type}$nullClause"
 }
+
+/**
+ * StarRocks rejects an in-place column type change it cannot perform (e.g. integer<->number, i.e.
+ * `BIGINT`<->`DECIMAL`) with error 1064 "Can not change <X> to <Y>". The set of in-place-convertible
+ * type pairs is version-dependent and not fully documented (e.g. `VARCHAR`->`DECIMAL` works despite
+ * being absent from the docs), so rather than hardcode a matrix we let StarRocks decide and treat this
+ * specific rejection as "skip this column" (issue #70, Gap B): the column keeps its old type until a
+ * manual Refresh recreates the table. Any other SQLException is a real failure and must propagate.
+ */
+internal fun isUnsupportedTypeChange(e: SQLException): Boolean =
+    e.errorCode == 1064 && e.message?.contains("Can not change", ignoreCase = true) == true
 
 /**
  * StarRocks implementation of the CDK [TableOperationsClient] / [TableSchemaEvolutionClient]. All DDL
@@ -311,9 +323,29 @@ class StarrocksAirbyteClient(
                 log.warn { "Skipping MODIFY on `$name` — StarRocks cannot tighten a populated column to NOT NULL" }
                 return@forEach
             }
-            execute(sql)
+            try {
+                execute(sql)
+            } catch (e: SQLException) {
+                // #70 Gap B: StarRocks can't convert this type in place (a non_breaking source type
+                // change Airbyte still propagates) — skip it instead of failing the whole sync. The old
+                // type lingers until a manual Refresh recreates the table.
+                if (isUnsupportedTypeChange(e)) {
+                    log.warn {
+                        "Skipping MODIFY on `$name` — StarRocks cannot convert ${change.originalType.type} to " +
+                            "${change.newType.type} in place (${e.message}). Run a Refresh to apply it."
+                    }
+                } else {
+                    throw e
+                }
+            }
         }
         columnChangeset.columnsToDrop.forEach { (name, _) ->
+            // #70 Gap A (deferred — intentionally not guarded): if `name` is a PRIMARY KEY column (the
+            // source dropped/renamed its PK), StarRocks rejects this ("Can not drop key column in
+            // primary data model table") and the sync fails. Skipping wouldn't actually help — the old
+            // NOT NULL key column would then break the next load — so the real fix is a table
+            // recreation, which Airbyte gates behind a manual Refresh (a PK removal is a breaking change
+            // → the connection pauses for review). Revisit only to surface a clearer error than 1064.
             execute("ALTER TABLE $qualifiedTable DROP COLUMN ${quoteIdent(name)}")
         }
     }
