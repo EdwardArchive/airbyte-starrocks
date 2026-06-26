@@ -18,6 +18,7 @@ import io.airbyte.integrations.destination.starrocks.spec.StarrocksConfiguration
 import io.airbyte.integrations.destination.starrocks.spec.StarrocksConfigurationFactory
 import io.airbyte.integrations.destination.starrocks.spec.StarrocksSpecification
 import io.airbyte.integrations.destination.starrocks.sql.StarrocksSqlGenerator
+import io.airbyte.integrations.destination.starrocks.tunnel.StarrocksSshTunnel
 import io.airbyte.integrations.destination.starrocks.version.StarrocksVersionGate
 import io.micronaut.context.annotation.Factory
 import jakarta.inject.Singleton
@@ -40,7 +41,20 @@ class StarrocksBeanFactory {
 
     @Singleton fun starrocksSqlGenerator(): StarrocksSqlGenerator = StarrocksSqlGenerator()
 
-    /** Stream Load HTTP client (FE http_port, default 8030) used by the dataflow load path. */
+    /**
+     * Optional SSH tunnel (issue #68). Opens on first injection (write/check start) and is closed at
+     * context shutdown (AutoCloseable). [SshNoTunnelMethod] yields a no-op tunnel. Lazy/@Singleton so
+     * `spec` never opens it.
+     */
+    @Singleton
+    fun starrocksSshTunnel(config: StarrocksConfiguration): StarrocksSshTunnel =
+        StarrocksSshTunnel(config.tunnelMethod, config.host, config.port)
+
+    /**
+     * Stream Load HTTP client (FE http_port, default 8030) used by the dataflow load path. Not
+     * tunneled — Stream Load's FE->BE 307 cannot traverse a single local forward, so tunneled
+     * deployments use the SQL `load_method` instead (#68).
+     */
     @Singleton
     fun streamLoadClient(config: StarrocksConfiguration): StreamLoadClient =
         StreamLoadClient(
@@ -48,17 +62,16 @@ class StarrocksBeanFactory {
             httpPort = config.httpPort,
             username = config.username,
             password = config.password,
-            // NOTE: Stream Load stays HTTP regardless of `ssl`. StarRocks serves the HTTP/Stream Load
-            // port (8030) over plain HTTP even when the MySQL-protocol port (9030) has TLS — so
-            // wiring `useSsl = config.ssl` broke loads on SSL clusters. `ssl` is JDBC-only.
+            // Stream Load stays HTTP regardless of `ssl` (8030 is plain HTTP even on TLS clusters).
         )
 
-    /** DDL + table metadata over the MySQL protocol (port 9030). */
+    /** DDL + table metadata over the MySQL protocol (port 9030), tunneled when configured. */
     @Singleton
     fun starrocksAirbyteClient(
         config: StarrocksConfiguration,
         sqlGenerator: StarrocksSqlGenerator,
-    ): StarrocksAirbyteClient = StarrocksAirbyteClient(config, sqlGenerator)
+        tunnel: StarrocksSshTunnel,
+    ): StarrocksAirbyteClient = StarrocksAirbyteClient(config, sqlGenerator, tunnel)
 
     /**
      * Version-detected Stream Load capabilities (compression, Merge Commit, …), resolved once at

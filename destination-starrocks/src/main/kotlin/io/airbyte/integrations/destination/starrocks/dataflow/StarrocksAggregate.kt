@@ -20,10 +20,12 @@ import io.airbyte.cdk.load.write.StreamStateStore
 import io.airbyte.integrations.destination.starrocks.http.StreamLoadClient
 import io.airbyte.integrations.destination.starrocks.spec.LoadCompression
 import io.airbyte.integrations.destination.starrocks.spec.StarrocksConfiguration
+import io.airbyte.integrations.destination.starrocks.tunnel.StarrocksSshTunnel
 import io.airbyte.integrations.destination.starrocks.version.StarrocksVersionGate
 import io.airbyte.integrations.destination.starrocks.write.load.CsvRowInsertBuffer
 import io.airbyte.integrations.destination.starrocks.write.load.JsonRowInsertBuffer
 import io.airbyte.integrations.destination.starrocks.write.load.RowInsertBuffer
+import io.airbyte.integrations.destination.starrocks.write.load.SqlRowInsertBuffer
 import io.micronaut.context.annotation.Factory
 
 /** Wraps a [RowInsertBuffer]: each accepted record is buffered; [flush] issues Stream Load. */
@@ -47,6 +49,7 @@ class StarrocksAggregateFactory(
     private val streamLoadClient: StreamLoadClient,
     private val config: StarrocksConfiguration,
     private val capabilities: StarrocksVersionGate.Capabilities,
+    private val tunnel: StarrocksSshTunnel,
 ) : AggregateFactory {
 
     override fun create(key: DestinationStream.Descriptor): Aggregate {
@@ -57,35 +60,55 @@ class StarrocksAggregateFactory(
         val stream = catalog.getStream(key)
         val cdcDelete = cdcDeleteEnabled(stream)
 
-        // The CDC delete path appends an `__op` column; a source column already named `__op`
-        // (reserved in StarRocks >= 3.3.6) would collide and corrupt the load — fail clearly (#45).
-        require(!(cdcDelete && CsvRowInsertBuffer.OP_COLUMN in stream.tableSchema.columnSchema.finalSchema.keys)) {
+        // The Stream Load CDC delete path appends an `__op` column; a source column already named
+        // `__op` (reserved in StarRocks >= 3.3.6) would collide and corrupt the load (#45). The SQL
+        // load path uses INSERT/DELETE (no `__op`), so the guard only applies when NOT loading via SQL.
+        require(
+            !(cdcDelete &&
+                !config.loadAsSql &&
+                CsvRowInsertBuffer.OP_COLUMN in stream.tableSchema.columnSchema.finalSchema.keys),
+        ) {
             "Stream '${key.name}' has a column named '${CsvRowInsertBuffer.OP_COLUMN}', which collides " +
                 "with the CDC operation column StarRocks uses for load-time delete/upsert. Rename it at the source."
         }
 
         val columns = finalColumns(stream)
         val buffer: RowInsertBuffer =
-            if (config.loadAsJson) {
-                // Compress only when requested AND the detected version supports request-body
-                // compression (>= 3.3.2). `check` already fails fast on compression+CSV or +old
-                // cluster; this is the write-time guard that actually flips it on.
-                val compression =
-                    if (LoadCompression.isEnabled(config.compression) && capabilities.compression) {
-                        config.compression
-                    } else {
-                        null
-                    }
-                JsonRowInsertBuffer(
-                    tableName,
-                    columns,
-                    cdcDelete,
-                    streamLoadClient,
-                    config.cdcSoftDelete,
-                    compression = compression,
-                )
-            } else {
-                CsvRowInsertBuffer(tableName, columns, cdcDelete, streamLoadClient, config.cdcSoftDelete)
+            when {
+                // SQL load (#68): batched INSERT/DELETE over the (tunneled/TLS) JDBC connection.
+                config.loadAsSql ->
+                    SqlRowInsertBuffer(
+                        tableName,
+                        columns,
+                        cdcDelete,
+                        primaryKeyColumns(stream),
+                        // rewriteBatchedStatements -> one multi-row INSERT per batch; useServerPrepStmts
+                        // =false keeps client-side prep (StarRocks rejects MySQL server-prepared stmts).
+                        config.jdbcUrlFor(tunnel.jdbcHost, tunnel.jdbcPort) +
+                            "&rewriteBatchedStatements=true&useServerPrepStmts=false",
+                        config.username,
+                        config.password,
+                        config.cdcSoftDelete,
+                    )
+                config.loadAsJson -> {
+                    // Compress only when requested AND the detected version supports request-body
+                    // compression (>= 3.3.2); `check` already fails fast otherwise.
+                    val compression =
+                        if (LoadCompression.isEnabled(config.compression) && capabilities.compression) {
+                            config.compression
+                        } else {
+                            null
+                        }
+                    JsonRowInsertBuffer(
+                        tableName,
+                        columns,
+                        cdcDelete,
+                        streamLoadClient,
+                        config.cdcSoftDelete,
+                        compression = compression,
+                    )
+                }
+                else -> CsvRowInsertBuffer(tableName, columns, cdcDelete, streamLoadClient, config.cdcSoftDelete)
             }
         return StarrocksAggregate(buffer)
     }
@@ -107,5 +130,9 @@ class StarrocksAggregateFactory(
         fun cdcDeleteEnabled(stream: DestinationStream): Boolean =
             stream.tableSchema.importType is Dedupe &&
                 stream.tableSchema.columnSchema.finalSchema.containsKey(CDC_DELETED_AT_COLUMN)
+
+        /** PRIMARY KEY columns for a Dedupe stream (for the SQL CDC `DELETE` predicate); else empty. */
+        fun primaryKeyColumns(stream: DestinationStream): List<String> =
+            (stream.tableSchema.importType as? Dedupe)?.primaryKey?.map { it.single() } ?: emptyList()
     }
 }

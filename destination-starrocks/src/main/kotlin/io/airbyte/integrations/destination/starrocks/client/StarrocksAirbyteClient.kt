@@ -22,6 +22,7 @@ import io.airbyte.cdk.load.table.ColumnNameMapping
 import io.airbyte.integrations.destination.starrocks.schema.StarrocksSqlTypes
 import io.airbyte.integrations.destination.starrocks.spec.StarrocksConfiguration
 import io.airbyte.integrations.destination.starrocks.sql.KeyModel
+import io.airbyte.integrations.destination.starrocks.tunnel.StarrocksSshTunnel
 import io.airbyte.integrations.destination.starrocks.sql.quoteIdent
 import io.airbyte.integrations.destination.starrocks.sql.StarrocksColumn
 import io.airbyte.integrations.destination.starrocks.sql.StarrocksSqlGenerator
@@ -73,10 +74,14 @@ internal fun canonicalStarrocksType(dataType: String): String =
 class StarrocksAirbyteClient(
     private val config: StarrocksConfiguration,
     private val sqlGenerator: StarrocksSqlGenerator,
+    private val tunnel: StarrocksSshTunnel,
 ) : TableOperationsClient, TableSchemaEvolutionClient {
 
+    // When tunneling, connect to the SSH local forward; otherwise straight to StarRocks (#68).
+    private val jdbcUrl: String = config.jdbcUrlFor(tunnel.jdbcHost, tunnel.jdbcPort)
+
     private fun <T> withConnection(block: (Connection) -> T): T =
-        DriverManager.getConnection(config.jdbcUrl, config.username, config.password).use(block)
+        DriverManager.getConnection(jdbcUrl, config.username, config.password).use(block)
 
     private fun execute(sql: String) {
         log.info { sql }

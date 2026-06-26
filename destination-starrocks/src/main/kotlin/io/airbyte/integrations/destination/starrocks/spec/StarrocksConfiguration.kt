@@ -6,6 +6,8 @@ package io.airbyte.integrations.destination.starrocks.spec
 
 import io.airbyte.cdk.load.command.DestinationConfiguration
 import io.airbyte.cdk.load.command.DestinationConfigurationFactory
+import io.airbyte.cdk.ssh.SshNoTunnelMethod
+import io.airbyte.cdk.ssh.SshTunnelMethodConfiguration
 import jakarta.inject.Singleton
 
 /**
@@ -29,21 +31,29 @@ data class StarrocksConfiguration(
     /** Stream Load body compression: "none"/"gzip"/"zstd". Effective only with the JSON load format
      * on a cluster >= 3.3.2 (validated at check). */
     val compression: String = LoadCompression.NONE,
+    /** SSH tunnel (jump server) for the JDBC plane; [SshNoTunnelMethod] = direct. Issue #68. */
+    val tunnelMethod: SshTunnelMethodConfiguration = SshNoTunnelMethod,
+    /** Load over JDBC (batched INSERT/DELETE) instead of HTTP Stream Load — for tunnel/SSL. #68. */
+    val loadAsSql: Boolean = false,
 ) : DestinationConfiguration() {
     val resolvedDatabase: String = database.ifEmpty { Defaults.DATABASE_NAME }
 
     /**
-     * JDBC URL without a default schema. When ssl is on, `sslMode` selects the verification level
-     * (REQUIRED = encrypt only; VERIFY_CA/VERIFY_IDENTITY = verify against the JVM trust store).
-     * When off, SSL is disabled. (Replaces the old `useSSL`/`requireSSL` pair, which encrypted but
-     * never authenticated the server — issue #39.)
+     * JDBC URL (no default schema) for the given host:port. When tunneling, the host:port is the
+     * tunnel's local forward; otherwise the configured StarRocks host/port. When ssl is on, `sslMode`
+     * selects the verification level (REQUIRED = encrypt only; VERIFY_CA/VERIFY_IDENTITY = verify
+     * against the JVM trust store); off = disabled (issue #39).
      */
-    val jdbcUrl: String =
+    fun jdbcUrlFor(jdbcHost: String, jdbcPort: Int): String =
         if (ssl) {
-            "jdbc:mysql://$host:$port/?sslMode=${SslMode.toConnectorJ(sslMode)}"
+            "jdbc:mysql://$jdbcHost:$jdbcPort/?sslMode=${SslMode.toConnectorJ(sslMode)}"
         } else {
-            "jdbc:mysql://$host:$port/?sslMode=DISABLED"
+            "jdbc:mysql://$jdbcHost:$jdbcPort/?sslMode=DISABLED"
         }
+
+    /** Direct (untunneled) JDBC URL — convenience for the common no-tunnel path and tests. */
+    val jdbcUrl: String
+        get() = jdbcUrlFor(host, port)
 
     object Defaults {
         const val DATABASE_NAME = "default"
@@ -67,5 +77,7 @@ class StarrocksConfigurationFactory :
             loadAsJson = pojo.loadFormat.isJson,
             sslMode = pojo.sslMode,
             compression = pojo.loadFormat.compression,
+            tunnelMethod = pojo.tunnelMethod,
+            loadAsSql = LoadMethod.isSql(pojo.loadMethod),
         )
 }

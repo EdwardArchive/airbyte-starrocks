@@ -5,10 +5,12 @@
 package io.airbyte.integrations.destination.starrocks.check
 
 import io.airbyte.cdk.load.check.DestinationChecker
+import io.airbyte.cdk.ssh.SshNoTunnelMethod
 import io.airbyte.integrations.destination.starrocks.http.StreamLoadClient
 import io.airbyte.integrations.destination.starrocks.spec.LoadCompression
 import io.airbyte.integrations.destination.starrocks.spec.StarrocksConfiguration
 import io.airbyte.integrations.destination.starrocks.sql.quoteIdent
+import io.airbyte.integrations.destination.starrocks.tunnel.StarrocksSshTunnel
 import io.airbyte.integrations.destination.starrocks.version.StarrocksVersionGate
 import jakarta.inject.Singleton
 import java.sql.Connection
@@ -30,10 +32,18 @@ import java.util.UUID
 @Singleton
 class StarrocksChecker(
     private val config: StarrocksConfiguration,
+    private val tunnel: StarrocksSshTunnel,
 ) : DestinationChecker {
 
     override fun check() {
-        DriverManager.getConnection(config.jdbcUrl, config.username, config.password).use { conn ->
+        // When an SSH tunnel is configured it opens on bean construction — so a passing check also
+        // proves the bastion + tunnel work. Connect over the (possibly tunneled) JDBC endpoint.
+        DriverManager.getConnection(
+                config.jdbcUrlFor(tunnel.jdbcHost, tunnel.jdbcPort),
+                config.username,
+                config.password,
+            )
+            .use { conn ->
             val version =
                 conn.createStatement().use { stmt ->
                     stmt.executeQuery("SELECT current_version()").use { rs ->
@@ -46,16 +56,48 @@ class StarrocksChecker(
             require(!version.isNullOrBlank()) { "StarRocks check failed: empty version string" }
             StarrocksVersionGate.validate(version)
 
-            // Fail fast if compression is requested on too old a cluster. (CSV+compression is no longer
-            // representable — compression is a field of the JSON load-format branch only.)
-            if (LoadCompression.isEnabled(config.compression)) {
-                require(StarrocksVersionGate.capabilities(version).compression) {
-                    "StarRocks check failed: JSON compression '${config.compression}' requires StarRocks " +
-                        ">= ${StarrocksVersionGate.MIN_COMPRESSION}; detected $version. Use an uncompressed JSON format."
-                }
+            // An SSH tunnel only forwards the JDBC connection; Stream Load's HTTP data plane (with its
+            // FE->BE 307 redirect) cannot traverse it, so a tunnel requires the SQL load method (#68).
+            require(config.tunnelMethod is SshNoTunnelMethod || config.loadAsSql) {
+                "StarRocks check failed: an SSH tunnel only forwards the JDBC connection, but the Stream " +
+                    "Load data plane is HTTP and cannot be tunneled. Set the load method to 'SQL'."
             }
 
-            validateStreamLoad(conn)
+            if (config.loadAsSql) {
+                validateSqlLoad(conn)
+            } else {
+                // Compression is a Stream Load (JSON) feature; fail fast if requested on too old a cluster.
+                if (LoadCompression.isEnabled(config.compression)) {
+                    require(StarrocksVersionGate.capabilities(version).compression) {
+                        "StarRocks check failed: JSON compression '${config.compression}' requires StarRocks " +
+                            ">= ${StarrocksVersionGate.MIN_COMPRESSION}; detected $version. Use an uncompressed JSON format."
+                    }
+                }
+                validateStreamLoad(conn)
+            }
+        }
+    }
+
+    /** Round-trips one row through a JDBC INSERT into a throwaway table, then drops it (SQL load). */
+    private fun validateSqlLoad(conn: Connection) {
+        val database = config.resolvedDatabase
+        val table = "_airbyte_check_${UUID.randomUUID().toString().replace("-", "")}"
+        val qualified = "${quoteIdent(database)}.${quoteIdent(table)}"
+        conn.createStatement().use { stmt ->
+            stmt.execute("CREATE DATABASE IF NOT EXISTS ${quoteIdent(database)}")
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS $qualified (${quoteIdent("id")} INT NOT NULL) " +
+                    "DUPLICATE KEY(${quoteIdent("id")}) DISTRIBUTED BY HASH(${quoteIdent("id")}) " +
+                    "BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")",
+            )
+        }
+        try {
+            conn.prepareStatement("INSERT INTO $qualified (${quoteIdent("id")}) VALUES (?)").use { ps ->
+                ps.setString(1, "1")
+                ps.executeUpdate()
+            }
+        } finally {
+            conn.createStatement().use { it.execute("DROP TABLE IF EXISTS $qualified") }
         }
     }
 

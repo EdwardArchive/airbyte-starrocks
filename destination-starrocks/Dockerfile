@@ -22,5 +22,5 @@ ENV AIRBYTE_SPEC_CMD="/airbyte/bin/destination-starrocks --spec" \
 # Invoke via bash so base.sh does not need the execute bit.
 ENTRYPOINT ["/airbyte/base.sh"]
 
-LABEL io.airbyte.version=2.0.22
+LABEL io.airbyte.version=2.0.23
 LABEL io.airbyte.name=airbyte/destination-starrocks
