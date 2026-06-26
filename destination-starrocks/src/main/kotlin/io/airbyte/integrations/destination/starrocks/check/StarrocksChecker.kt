@@ -6,6 +6,7 @@ package io.airbyte.integrations.destination.starrocks.check
 
 import io.airbyte.cdk.load.check.DestinationChecker
 import io.airbyte.integrations.destination.starrocks.http.StreamLoadClient
+import io.airbyte.integrations.destination.starrocks.spec.LoadCompression
 import io.airbyte.integrations.destination.starrocks.spec.StarrocksConfiguration
 import io.airbyte.integrations.destination.starrocks.sql.quoteIdent
 import io.airbyte.integrations.destination.starrocks.version.StarrocksVersionGate
@@ -45,17 +46,17 @@ class StarrocksChecker(
             require(!version.isNullOrBlank()) { "StarRocks check failed: empty version string" }
             StarrocksVersionGate.validate(version)
 
-            // Fail fast on an unsupported compression combo rather than silently sending an
-            // uncompressed/garbled body at write time (StarRocks compresses JSON bodies only, >= 3.3.2).
-            if (config.compressGzip) {
+            // Fail fast on an unsupported compression combo rather than silently sending a body
+            // StarRocks won't decompress at write time (it decompresses JSON bodies only, >= 3.3.2).
+            if (LoadCompression.isEnabled(config.compression)) {
                 require(config.loadAsJson) {
-                    "StarRocks check failed: load_compression=gzip requires the JSON load format — " +
-                        "StarRocks does not decompress CSV Stream Load bodies. Set load_format=JSON or " +
-                        "load_compression=none."
+                    "StarRocks check failed: load_compression=${config.compression} requires the JSON " +
+                        "load format — StarRocks does not decompress CSV Stream Load bodies. Set " +
+                        "load_format=JSON or load_compression=none."
                 }
                 require(StarrocksVersionGate.capabilities(version).compression) {
-                    "StarRocks check failed: load_compression=gzip requires StarRocks >= " +
-                        "${StarrocksVersionGate.MIN_COMPRESSION}; detected $version. Set load_compression=none."
+                    "StarRocks check failed: load_compression=${config.compression} requires StarRocks " +
+                        ">= ${StarrocksVersionGate.MIN_COMPRESSION}; detected $version. Set load_compression=none."
                 }
             }
 

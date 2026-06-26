@@ -118,12 +118,13 @@ class StarrocksSpecification : ConfigurationSpecification() {
     @get:JsonPropertyDescription(
         "Compress the Stream Load request body to cut network traffic on large batches. Only the " +
             "JSON load format is compressed (StarRocks does not decompress CSV bodies) and only on " +
-            "clusters >= 3.3.2; with 'gzip' selected, an older cluster or the CSV load format fails " +
-            "the connection check with a clear message.",
+            "clusters >= 3.3.2; with compression enabled, an older cluster or the CSV load format " +
+            "fails the connection check with a clear message. 'zstd' compresses better than 'gzip' " +
+            "at similar or lower CPU cost.",
     )
     @get:JsonProperty("load_compression")
     @get:JsonSchemaInject(
-        json = """{"order": 11, "default": "none", "enum": ["none", "gzip"], "group": "connection"}""",
+        json = """{"order": 11, "default": "none", "enum": ["none", "gzip", "zstd"], "group": "connection"}""",
     )
     val loadCompression: String = LoadCompression.NONE
 }
@@ -146,9 +147,10 @@ object LoadFormat {
 object LoadCompression {
     const val NONE = "none"
     const val GZIP = "gzip"
+    const val ZSTD = "zstd"
 
-    /** Whether request-body gzip compression is requested (only honored on the JSON load format). */
-    fun isGzip(mode: String): Boolean = mode.equals(GZIP, ignoreCase = true)
+    /** Whether any request-body compression is requested (only honored on the JSON load format). */
+    fun isEnabled(mode: String): Boolean = !mode.equals(NONE, ignoreCase = true)
 }
 
 object SslMode {
