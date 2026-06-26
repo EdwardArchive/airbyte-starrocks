@@ -26,28 +26,10 @@ class StarrocksVersionGateTest {
     }
 
     @Test
-    fun `capabilities at the 3_3_11 baseline`() {
-        val c = StarrocksVersionGate.capabilities("3.3.11")
-        assertTrue(c.pkDedup)
-        assertTrue(c.columnModePartialUpdate)
-        assertTrue(c.columnModePartialWithCondition)
-        assertTrue(c.compression) // 3.3.11 >= 3.3.2
-        assertFalse(c.mergeCommit) // 3.3.11 < 3.4.0
-    }
-
-    @Test
-    fun `capabilities grow with version`() {
-        val v35 = StarrocksVersionGate.capabilities("3.5.4")
-        assertTrue(v35.mergeCommit)
-
-        val v33early = StarrocksVersionGate.capabilities("3.3.5")
-        assertTrue(v33early.pkDedup)
-        assertTrue(v33early.columnModePartialUpdate)
-        assertFalse(v33early.columnModePartialWithCondition) // needs >= 3.3.11
-
-        // request-body compression turns on at 3.3.2
+    fun `compression capability turns on at 3_3_2`() {
         assertFalse(StarrocksVersionGate.capabilities("3.3.1").compression)
         assertTrue(StarrocksVersionGate.capabilities("3.3.2").compression)
+        assertTrue(StarrocksVersionGate.capabilities("3.3.11").compression)
         assertTrue(StarrocksVersionGate.capabilities("4.1.1").compression)
     }
 

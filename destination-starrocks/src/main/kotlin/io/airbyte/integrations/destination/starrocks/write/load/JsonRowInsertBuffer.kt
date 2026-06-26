@@ -157,8 +157,8 @@ class JsonRowInsertBuffer(
     private fun sha256Hex(bytes: ByteArray): String =
         MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 
-    /** Compress with the requested algorithm. gzip is deterministic for identical input
-     * (GZIPOutputStream writes mtime=0); zstd is provided by zstd-jni. */
+    /** Compress the request body with the requested algorithm (gzip is JVM-built-in; zstd via zstd-jni).
+     * Idempotency is unaffected: the retry label is content-addressed on the uncompressed body. */
     internal fun compress(algo: String, data: ByteArray): ByteArray {
         val baos = ByteArrayOutputStream(data.size / 2)
         val out: OutputStream =

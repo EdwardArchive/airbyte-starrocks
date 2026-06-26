@@ -74,9 +74,9 @@ class StarrocksBeanFactory {
     ): StarrocksAirbyteClient = StarrocksAirbyteClient(config, sqlGenerator, tunnel)
 
     /**
-     * Version-detected Stream Load capabilities (compression, Merge Commit, …), resolved once at
-     * write start from `SELECT current_version()`. Lets the load path opt into higher-version
-     * features up to the 4.1.x ceiling. Lazy/`write`-only, so `spec` never hits the cluster.
+     * Version-detected Stream Load capabilities (request-body compression), resolved once at write
+     * start from `SELECT current_version()`. Lets the JSON load path opt into compression when the
+     * cluster supports it. Lazy/`write`-only, so `spec` never hits the cluster.
      */
     @Singleton
     fun starrocksCapabilities(client: StarrocksAirbyteClient): StarrocksVersionGate.Capabilities =

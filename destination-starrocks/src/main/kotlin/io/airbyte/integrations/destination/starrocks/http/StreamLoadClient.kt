@@ -44,16 +44,15 @@ data class StreamLoadResponse(
  * BE/CN node on a different host:port. OkHttp (a) will not auto-follow a 307 on a PUT and (b) strips
  * `Authorization` on a cross-host redirect — so we disable auto-follow and follow the `Location`
  * manually, re-attaching the `Authorization` header on every hop. This is `curl --location-trusted`.
+ *
+ * StarRocks' `http_port` is plain HTTP even on TLS-enabled clusters (`ssl` is for the JDBC control
+ * plane only), so this client always speaks HTTP.
  */
 class StreamLoadClient(
     private val host: String,
     private val httpPort: Int,
     username: String,
     password: String,
-    // When true, Stream Load uses https:// (data plane TLS). Off by default; gated by the `ssl`
-    // config, same as the JDBC control plane. The default OkHttp client verifies the server
-    // certificate against the system trust store (add the cluster CA there for self-signed certs).
-    private val useSsl: Boolean = false,
     // `Expect: 100-continue` lets the FE answer 307 without receiving the body (so the body is only
     // ever sent to the BE). Disabled in unit tests because MockWebServer doesn't do the 100 handshake.
     private val expectContinue: Boolean = true,
@@ -62,7 +61,6 @@ class StreamLoadClient(
 ) {
     private val authHeader = Credentials.basic(username, password)
     private val mapper = ObjectMapper()
-    private val scheme = if (useSsl) "https" else "http"
 
     fun streamLoad(
         database: String,
@@ -71,7 +69,7 @@ class StreamLoadClient(
         headers: Map<String, String>,
         body: ByteArray,
     ): StreamLoadResponse {
-        var request = buildRequest("$scheme://$host:$httpPort/api/$database/$table/_stream_load", label, headers, body)
+        var request = buildRequest("http://$host:$httpPort/api/$database/$table/_stream_load", label, headers, body)
         var redirects = 0
         var response = client.newCall(request).execute()
         try {
