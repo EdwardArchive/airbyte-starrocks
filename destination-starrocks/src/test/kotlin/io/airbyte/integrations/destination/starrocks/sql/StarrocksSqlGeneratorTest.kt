@@ -62,6 +62,30 @@ class StarrocksSqlGeneratorTest {
     }
 
     @Test
+    fun `replication_num appended as PROPERTIES after DISTRIBUTED BY when set`() {
+        val ddl =
+            gen.createTable(
+                "db",
+                "orders",
+                columns,
+                keyColumns = listOf("id"),
+                model = KeyModel.PRIMARY,
+                replicationNum = 1,
+            )
+        assertTrue(
+            ddl.contains("DISTRIBUTED BY HASH (`id`)\nPROPERTIES (\"replication_num\" = \"1\")"),
+            "replication_num must be appended as a PROPERTIES clause after DISTRIBUTED BY",
+        )
+    }
+
+    @Test
+    fun `no PROPERTIES clause when replication_num is unset`() {
+        val ddl = gen.createTable("db", "t", columns, keyColumns = listOf("id"), model = KeyModel.PRIMARY)
+        assertFalse(ddl.contains("PROPERTIES"), "unset replication_num must not emit a PROPERTIES clause")
+        assertFalse(ddl.contains("replication_num"))
+    }
+
+    @Test
     fun `rejects key column not present in columns`() {
         assertThrows<IllegalArgumentException> {
             gen.createTable("db", "t", columns, keyColumns = listOf("missing"), model = KeyModel.PRIMARY)

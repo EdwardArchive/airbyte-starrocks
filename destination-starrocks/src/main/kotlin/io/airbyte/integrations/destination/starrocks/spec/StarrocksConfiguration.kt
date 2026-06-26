@@ -35,6 +35,9 @@ data class StarrocksConfiguration(
     val tunnelMethod: SshTunnelMethodConfiguration = SshNoTunnelMethod,
     /** Load over JDBC (batched INSERT/DELETE) instead of HTTP Stream Load — for tunnel/SSL. #68. */
     val loadAsSql: Boolean = false,
+    /** Optional StarRocks `replication_num` for tables the connector creates. Null = omit PROPERTIES
+     * (cluster default); set to 1 for single-BE shared-nothing clusters. Issue #58. */
+    val replicationNum: Int? = null,
 ) : DestinationConfiguration() {
     val resolvedDatabase: String = database.ifEmpty { Defaults.DATABASE_NAME }
 
@@ -79,5 +82,6 @@ class StarrocksConfigurationFactory :
             compression = pojo.loadFormat.compression,
             tunnelMethod = pojo.tunnelMethod,
             loadAsSql = LoadMethod.isSql(pojo.loadMethod),
+            replicationNum = pojo.replicationNum,
         )
 }

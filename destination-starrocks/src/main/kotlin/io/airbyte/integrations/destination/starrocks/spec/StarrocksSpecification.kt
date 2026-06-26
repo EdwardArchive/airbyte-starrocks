@@ -142,6 +142,18 @@ class StarrocksSpecification : ConfigurationSpecification() {
         json = """{"order": 9, "default": "Stream Load", "enum": ["Stream Load", "SQL"], "group": "loading"}""",
     )
     val loadMethod: String = LoadMethod.STREAM_LOAD
+
+    @get:JsonSchemaTitle("Replication Number")
+    @get:JsonPropertyDescription(
+        "Replicas per tablet for tables this connector creates (the StarRocks `replication_num` table " +
+            "property). Leave unset to use the cluster default (normally 3) — correct for shared-data and " +
+            "multi-BE shared-nothing clusters. Set to 1 for a single-BE shared-nothing cluster, which " +
+            "otherwise rejects CREATE TABLE (\"replication num should be less than the number of available " +
+            "BE\"). Applies only when tables are created; existing tables are left unchanged.",
+    )
+    @get:JsonProperty("replication_num")
+    @get:JsonSchemaInject(json = """{"order": 13, "minimum": 1, "group": "advanced"}""")
+    val replicationNum: Int? = null
 }
 
 object LoadMethod {
@@ -254,5 +266,6 @@ class StarrocksSpecificationExtension : DestinationSpecificationExtension {
             DestinationSpecificationExtension.Group("connection", "Connection"),
             DestinationSpecificationExtension.Group("security", "Security & Tunnel"),
             DestinationSpecificationExtension.Group("loading", "Data Loading"),
+            DestinationSpecificationExtension.Group("advanced", "Advanced"),
         )
 }

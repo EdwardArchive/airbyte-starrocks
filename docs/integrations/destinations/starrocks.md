@@ -142,6 +142,7 @@ StarRocks' FE HTTP port is not TLS.
 | `compression`       |    No    | `none`        | Under the `JSON` load format only: `none`, `gzip`, or `zstd` for the Stream Load request body.            |
 | `tunnel_method`     |    No    | No tunnel     | Optional SSH tunnel (jump server / bastion) for both planes. See "SSH tunnel and load method" below.      |
 | `load_method`       |    No    | `Stream Load` | How records are loaded: `Stream Load` (HTTP bulk load) or `SQL` (batched INSERT/DELETE over JDBC).        |
+| `replication_num`   |    No    | cluster default | Replicas per tablet for tables the connector creates (StarRocks `replication_num`). Unset uses the cluster default (normally 3); set to `1` for single-BE shared-nothing clusters. Applies to newly created tables only. |
 
 ## Supported sync modes
 

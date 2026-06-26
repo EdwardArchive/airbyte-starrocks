@@ -149,6 +149,7 @@ class StarrocksAirbyteClient(
                 model = model,
                 // When replacing we just dropped the table; otherwise keep it idempotent.
                 ifNotExists = !replace,
+                replicationNum = config.replicationNum,
             ),
         )
     }
